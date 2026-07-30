@@ -1,0 +1,24 @@
+{
+  "capturedAt": "2026-07-28T16:06:00+08:00",
+  "environment": "http://192.168.0.112:23191/#/cases",
+  "cards": 4,
+  "titles": [
+    "CylinderFlowPINN：二维圆柱绕流瞬态流场",
+    "1U立方星材料属性参数反演",
+    "PINNsformer：三维瞬态单一温度场无网格建模求解",
+    "1U立方星多物理场（热-结构）耦合求解"
+  ],
+  "categoriesDetected": {
+    "math": false,
+    "physics": true,
+    "material": true
+  },
+  "menuButtons": 4,
+  "clickFlow": {
+    "caseTitleLocatorResolved": true,
+    "caseCardLocatorResolved": true,
+    "navigationAfterClick": false,
+    "finding": "案例标题和卡片可以定位，但点击后页面仍停留在案例列表，当前目录页未暴露明确的运行/执行入口。"
+  },
+  "nextRequirement": "需要平台提供案例运行按钮、稳定 data-testid 或实际执行 API，才能继续完成批量运行和返回结果核对。"
+}

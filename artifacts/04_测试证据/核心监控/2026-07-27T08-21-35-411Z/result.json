@@ -1,0 +1,8 @@
+{
+  "runId": "2026-07-27T08-21-35-411Z",
+  "time": "2026-07-27T08:21:35.411Z",
+  "environment": "http://192.168.0.112:23191",
+  "ok": false,
+  "error": "75 秒内未发现本次监控问题对应的回答",
+  "evidence": "C:\\Users\\se42\\Documents\\Codex\\2026-07-27\\an-zh\\outputs\\science42-test-suite\\artifacts\\core-monitor\\2026-07-27T08-21-35-411Z"
+}

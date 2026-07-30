@@ -1,0 +1,82 @@
+[
+  {
+    "index": 1,
+    "question": "3.6×10^5 / 1.2×10^3，只输出结果。",
+    "answer": "300",
+    "elapsedMs": 4357,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:12:50.326Z"
+  },
+  {
+    "index": 2,
+    "question": "125 + 378 等于多少？只输出结果。",
+    "answer": "503",
+    "elapsedMs": 3325,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:12:53.669Z"
+  },
+  {
+    "index": 3,
+    "question": "12 × 13 等于多少？只输出结果。",
+    "answer": "156",
+    "elapsedMs": 4002,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:12:57.690Z"
+  },
+  {
+    "index": 4,
+    "question": "水的化学式是什么？简短回答。",
+    "answer": "H₂O",
+    "elapsedMs": 6137,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:13:03.857Z"
+  },
+  {
+    "index": 5,
+    "question": "地球绕什么运行？简短回答。",
+    "answer": "地球绕太阳运行。",
+    "elapsedMs": 4794,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:13:08.671Z"
+  },
+  {
+    "index": 6,
+    "question": "什么是机器学习？用一句话说明。",
+    "answer": "机器学习是人工智能的一个分支，它通过算法",
+    "elapsedMs": 4408,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:13:13.108Z"
+  },
+  {
+    "index": 7,
+    "question": "请严格只输出 JSON：{\"name\":\"Zhang San\",\"age\":18}",
+    "answer": "",
+    "elapsedMs": 75215,
+    "status": "failed",
+    "capturedAt": "2026-07-27T09:14:28.420Z"
+  },
+  {
+    "index": 8,
+    "question": "请用三点列出：测试、记录、复盘。",
+    "answer": "",
+    "elapsedMs": 75352,
+    "status": "failed",
+    "capturedAt": "2026-07-27T09:15:43.796Z"
+  },
+  {
+    "index": 9,
+    "question": "为什么需要保存测试日志？用一句话说明。",
+    "answer": "保存测试日志是为了记录实验全过程的详细数据与现象，以便后续进行结果复现、问题排查及数据分析。",
+    "elapsedMs": 632,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:15:44.450Z"
+  },
+  {
+    "index": 10,
+    "question": "解释 P95，限 20 字。",
+    "answer": "P95 指 95% 的请求响应时间低于该值。",
+    "elapsedMs": 1504,
+    "status": "completed",
+    "capturedAt": "2026-07-27T09:15:45.978Z"
+  }
+]

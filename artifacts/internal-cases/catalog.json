@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-07-28T08:03:49.765Z",
+  "url": "http://192.168.0.112:23191/#/cases",
+  "cards": 0,
+  "titles": [],
+  "menuButtons": 0,
+  "categoriesDetected": {
+    "math": false,
+    "physics": false,
+    "material": false
+  },
+  "executionEntry": {
+    "hasRunButton": false,
+    "hasOpenJupyterButton": false,
+    "note": "目录页当前主要提供案例列表和 ellipsis 菜单；如没有运行入口，需由平台补充稳定 data-testid 或实际执行 API。"
+  }
+}
