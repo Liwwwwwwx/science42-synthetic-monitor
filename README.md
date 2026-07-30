@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```text
-science42-test-suite-完整交付/
+science42-test-suite-v2/
 ├─ api/                 # 团队接口探活脚本
 ├─ config/              # 测试配置和问题集
 ├─ k6/                  # HTTP 探活和性能测试
@@ -87,4 +87,4 @@ artifacts\01_综合报告\交付说明.md
 - 不要提交 `playwright\.auth\`。
 - 不要把真实账号、密码、Token 或 Cookie 写入代码和报告。
 - 本目录合并时未复制 `node_modules` 和 `.venv`，运行 `npm install` 即可恢复 Node 依赖。
-- 原来的两个文件夹均未删除或修改。
+
