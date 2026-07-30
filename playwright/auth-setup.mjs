@@ -1,4 +1,6 @@
 import { chromium } from '@playwright/test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { cfg, requireEnv } from '../config/test-config.mjs';
 
 requireEnv('SCIENCE42_USER', cfg.user);
@@ -7,6 +9,7 @@ const browser = await chromium.launch({ headless: false });
 const context = await browser.newContext();
 const page = await context.newPage();
 const baseUrl = process.env.SCIENCE42_BASE_URL || 'http://192.168.0.112:23191';
+const storageState = process.env.SCIENCE42_STORAGE_STATE || 'playwright/.auth/science42.json';
 await page.goto(new URL(cfg.entryPath, baseUrl).href);
 await page.locator(cfg.selectors.username).fill(cfg.user);
 await page.locator(cfg.selectors.password).fill(cfg.password);
@@ -18,6 +21,7 @@ for (let i = 0; i < 120; i++) {
   if (!loginVisible) break;
   await page.waitForTimeout(1000);
 }
-await context.storageState({ path: 'playwright/.auth/science42.json' });
+await fs.mkdir(path.dirname(storageState), { recursive: true, mode: 0o700 });
+await context.storageState({ path: storageState });
 await browser.close();
-console.log('已保存 playwright/.auth/science42.json');
+console.log(`已保存 ${storageState}`);

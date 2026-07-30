@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Science42 synthetic monitor every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+RandomizedDelaySec=30
+Unit=science42-synthetic-monitor.service
+
+[Install]
+WantedBy=timers.target

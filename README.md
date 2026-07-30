@@ -49,6 +49,12 @@ npm run auth:setup
 
 如遇滑块验证码，需要人工完成一次验证；脚本不绕过验证码。
 
+本机已完成 Science Admin Runner 注册后，使用下列命令运行并上报。Runner Token 只从 macOS 钥匙串读取，不写入 `.env` 或仓库：
+
+```bash
+npm run monitor:core:admin-local
+```
+
 ## 测试命令
 
 ```powershell
@@ -70,6 +76,10 @@ $env:ALERT_WEBHOOK_URL='告警Webhook地址'
 npm run monitor:core
 ```
 
+接入 Science Admin 后，将 Runner ID、Runner Token 和 Admin 后端地址写入权限为 `0600` 的环境文件；`npm run monitor:core` 会将三个检查（登录态、聊天流式、刷新恢复）和失败证据上报。Linux 部署文件位于 `deploy/`，使用 `systemd` timer 每十分钟执行一次；网络不可用时运行结果保存在本地 spool，下次执行自动补报。
+
+远程部署时以 `deploy/monitor.env.example` 为模板创建 `/etc/science42-synthetic-monitor/monitor.env`。首次登录命令读取该环境文件后，登录态会保存至 `/var/lib/science42-synthetic-monitor/science42.json`；后续 timer 会复用该登录态。
+
 ## 综合报告和交付材料
 
 优先阅读：
@@ -87,4 +97,3 @@ artifacts\01_综合报告\交付说明.md
 - 不要提交 `playwright\.auth\`。
 - 不要把真实账号、密码、Token 或 Cookie 写入代码和报告。
 - 本目录合并时未复制 `node_modules` 和 `.venv`，运行 `npm install` 即可恢复 Node 依赖。
-

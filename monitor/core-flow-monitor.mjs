@@ -1,114 +1,31 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
 
-const baseUrl = process.env.SCIENCE42_MONITOR_URL || process.env.SCIENCE42_BASE_URL || 'http://192.168.0.112:23191';
+const baseUrl = process.env.SCIENCE42_MONITOR_URL || process.env.SCIENCE42_BASE_URL;
 const entryPath = process.env.SCIENCE42_ENTRY_PATH || '/#/cases';
 const chatPath = process.env.SCIENCE42_CHAT_PATH || '/#/chat';
 const storageState = process.env.SCIENCE42_STORAGE_STATE || 'playwright/.auth/science42.json';
 const maxTaskMs = Number(process.env.MAX_TASK_MS || 75_000);
-const webhook = process.env.ALERT_WEBHOOK_URL;
 const artifactRoot = process.env.MONITOR_ARTIFACT_DIR || 'artifacts/core-monitor';
-const stateFile = path.join(artifactRoot, 'monitor-state.json');
-
-const now = new Date();
-const runId = now.toISOString().replaceAll(':', '-').replaceAll('.', '-');
-const runDir = path.join(artifactRoot, runId);
-await fs.mkdir(runDir, { recursive: true });
-
-async function readState() {
-  try { return JSON.parse(await fs.readFile(stateFile, 'utf8')); }
-  catch { return { consecutiveFailures: 0, consecutiveSuccesses: 0, alertOpen: false }; }
-}
-
-async function writeState(state) {
-  await fs.mkdir(path.dirname(stateFile), { recursive: true });
-  await fs.writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8');
-}
-
-async function sendAlert(payload) {
-  if (!webhook) return { sent: false, reason: 'ALERT_WEBHOOK_URL not configured' };
-  const response = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return { sent: response.ok, status: response.status };
-}
-
-async function runCheck() {
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ storageState });
-  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
-  const page = await context.newPage();
-  const started = Date.now();
-  let responseStatus = null;
-  let result = null;
-  try {
-    await page.goto(new URL(entryPath, baseUrl).href, { waitUntil: 'domcontentloaded' });
-    const password = page.locator('input[placeholder="密码"], input[type="password"]');
-    if (await password.count() > 0) throw new Error('登录状态失效或未提供 storageState');
-    const returnChat = page.getByRole('button', { name: /返回聊天/ });
-    if (await returnChat.count() === 1) await returnChat.click();
-    else await page.goto(new URL(chatPath, baseUrl).href, { waitUntil: 'domcontentloaded' });
-    const input = page.locator('textarea, input[placeholder*="提问"], input[placeholder*="问题"]');
-    await input.waitFor({ state: 'visible', timeout: 20_000 });
-    const question = `核心流程监控 ${now.toISOString()}：只回答“通过”。`;
-    await input.fill(question);
-    const responsePromise = page.waitForResponse(r => r.url().includes('/api/') && r.request().method() !== 'OPTIONS', { timeout: 10_000 }).catch(() => null);
-    await input.press('Enter');
-    let body = '';
-    let tail = '';
-    const deadline = Date.now() + maxTaskMs;
-    while (Date.now() < deadline) {
-      await page.waitForTimeout(500);
-      body = await page.locator('main').innerText();
-      const questionIndex = body.lastIndexOf(question);
-      tail = questionIndex >= 0 ? body.slice(questionIndex + question.length) : '';
-      if (questionIndex >= 0 && tail.includes('秋月白') && !/生成中|Generating/.test(tail)) break;
-    }
-    if (!tail.includes('秋月白')) throw new Error('75 秒内未发现本次监控问题对应的回答');
-    const firstMs = Date.now() - started;
-    const response = await responsePromise;
-    responseStatus = response?.status() ?? null;
-    if (/生成中|Generating/.test(tail)) throw new Error('回答仍处于生成中');
-    if (/失败|超时|failed/i.test(tail)) throw new Error('页面显示失败或超时状态');
-    result = { status: 'completed', firstMs, totalMs: Date.now() - started, httpStatus: responseStatus, question };
-  } finally {
-    await page.screenshot({ path: path.join(runDir, 'page.png'), fullPage: true }).catch(() => {});
-    await context.tracing.stop({ path: path.join(runDir, 'trace.zip') }).catch(() => {});
-    await browser.close();
-  }
-  return result;
-}
-
-const state = await readState();
-let ok = false;
-let error = null;
-try { await runCheck(); ok = true; }
-catch (e) { error = e instanceof Error ? e.message : String(e); }
-
-const record = { runId, time: now.toISOString(), environment: baseUrl, ok, error, evidence: runDir };
-await fs.writeFile(path.join(runDir, 'result.json'), JSON.stringify(record, null, 2), 'utf8');
-
-let alertResult = { sent: false, reason: 'not needed' };
-if (ok) {
-  state.consecutiveFailures = 0;
-  state.consecutiveSuccesses = (state.consecutiveSuccesses || 0) + 1;
-  if (state.alertOpen && state.consecutiveSuccesses >= 2) {
-    alertResult = await sendAlert({ title: '[Science42 恢复] 平台核心流程恢复', time: now.toISOString(), environment: baseUrl, consecutiveSuccesses: state.consecutiveSuccesses });
-    state.alertOpen = false;
-  }
-} else {
-  state.consecutiveSuccesses = 0;
-  state.consecutiveFailures = (state.consecutiveFailures || 0) + 1;
-  if (state.consecutiveFailures >= 2 && !state.alertOpen) {
-    alertResult = await sendAlert({ title: '[Science42 P1] 平台核心流程异常', time: now.toISOString(), environment: baseUrl, consecutiveFailures: state.consecutiveFailures, error, evidence: runDir });
-    state.alertOpen = true;
-  }
-}
-state.lastRun = record;
-state.lastAlert = alertResult;
-await writeState(state);
-console.log(JSON.stringify({ ...record, alert: alertResult }));
-if (!ok) process.exitCode = 1;
+const spoolRoot = process.env.MONITOR_SPOOL_DIR || 'artifacts/monitor-spool';
+const reportUrl = process.env.SYNTHETIC_MONITOR_REPORT_URL || '';
+const runnerId = process.env.SYNTHETIC_MONITOR_RUNNER_ID || '';
+const runnerToken = process.env.SYNTHETIC_MONITOR_RUNNER_TOKEN || '';
+const runId = crypto.randomUUID(); const runDir = path.join(artifactRoot, runId);
+function makeCheck(key, status, started, extra = {}) { return { key, status, durationMs: Date.now() - started, errorCode: extra.errorCode || null, message: extra.message || null }; }
+function classify(error) { const message = String(error?.message || error); if (/登录状态失效|storageState|登录/i.test(message)) return 'AUTH_EXPIRED'; if (/100\/100|对话已达上限/i.test(message)) return 'CONVERSATION_LIMIT'; if (/timeout|超时/i.test(message)) return 'TIMEOUT'; if (/locator|input/i.test(message)) return 'SELECTOR_UNAVAILABLE'; return 'CHECK_FAILED'; }
+function brief(error) { return String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500); }
+async function ensureChat(page) { await page.goto(new URL(entryPath, baseUrl).href, { waitUntil: 'domcontentloaded' }); if (await page.locator('input[placeholder="密码"], input[type="password"]').count() > 0) throw new Error('登录状态失效或未提供 storageState'); const returnChat = page.getByRole('button', { name: /返回聊天/ }); if (await returnChat.count() === 1) await returnChat.click(); else await page.goto(new URL(chatPath, baseUrl).href, { waitUntil: 'domcontentloaded' }); const blockingModal = page.locator('.ant-modal-wrap:visible, [role="dialog"]:visible').filter({ hasText: /套餐|科学探索永无止境/ }); if (await blockingModal.count()) { const close = blockingModal.locator('.ant-modal-close, button[aria-label="Close"]'); if (await close.count()) await close.first().click(); else await page.keyboard.press('Escape'); } const input = page.locator('textarea, input[placeholder*="提问"], input[placeholder*="问题"]').last(); await input.waitFor({ state: 'visible', timeout: 20_000 }); return input; }
+async function sendReport(report, evidence) { if (!reportUrl || !runnerId || !runnerToken) throw new Error('Synthetic report endpoint or runner credentials are not configured'); const form = new FormData(); form.set('payload', JSON.stringify(report)); for (const [key, file] of Object.entries(evidence)) if (file) form.set(key, new Blob([await fs.readFile(file)], { type: key === 'trace' ? 'application/zip' : 'image/png' }), path.basename(file)); const response = await fetch(`${reportUrl.replace(/\/$/, '')}/api/synthetic-monitoring/runners/${encodeURIComponent(runnerId)}/runs`, { method: 'POST', headers: { 'X-Synthetic-Monitor-Token': runnerToken }, body: form, signal: AbortSignal.timeout(30_000) }); if (!response.ok) throw new Error(`Synthetic report rejected: HTTP ${response.status}`); }
+async function spool(report, evidence) { await fs.mkdir(spoolRoot, { recursive: true, mode: 0o700 }); await fs.writeFile(path.join(spoolRoot, `${report.finishedAt.replaceAll(':', '-')}-${report.runId}.json`), JSON.stringify({ report, evidence }), { mode: 0o600 }); }
+async function flushSpool() { if (!reportUrl || !runnerId || !runnerToken) return; for (const file of (await fs.readdir(spoolRoot).catch(() => [])).filter((name) => name.endsWith('.json')).sort()) { try { const item = JSON.parse(await fs.readFile(path.join(spoolRoot, file), 'utf8')); await sendReport(item.report, item.evidence); await fs.unlink(path.join(spoolRoot, file)); } catch {} } }
+if (!baseUrl) throw new Error('SCIENCE42_MONITOR_URL or SCIENCE42_BASE_URL is required'); await fs.mkdir(runDir, { recursive: true }); await flushSpool();
+const startedAt = new Date(); const checks = []; let page; let context; let browser; let question; let canary;
+try { browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' }); context = await browser.newContext({ storageState }); await context.tracing.start({ screenshots: true, snapshots: true, sources: true }); page = await context.newPage(); let input; const authAt = Date.now(); try { input = await ensureChat(page); checks.push(makeCheck('auth_state', 'passed', authAt)); } catch (error) { checks.push(makeCheck('auth_state', 'failed', authAt, { errorCode: classify(error), message: brief(error) })); }
+  if (input) { const streamAt = Date.now(); try { canary = `SCIENCE42-CANARY-${crypto.randomBytes(6).toString('hex').toUpperCase()}`; question = `合成监控 ${runId}：请在回复中包含标记 ${canary}。`; await input.fill(question); const responsePromise = page.waitForResponse((response) => response.url().includes('/api/') && response.request().method() !== 'OPTIONS', { timeout: 10_000 }).catch(() => null); const send = page.locator('button[class*="chat-input-send"]'); if (await send.count()) await send.last().click(); else await input.press('Enter'); let tail = ''; const deadline = Date.now() + maxTaskMs; while (Date.now() < deadline) { await page.waitForTimeout(500); const body = await page.locator('main').innerText(); const index = body.lastIndexOf(question); tail = index >= 0 ? body.slice(index + question.length) : ''; if (index >= 0 && tail.includes(canary) && !/生成中|Generating/i.test(tail)) break; } const response = await responsePromise; if (!tail.includes(canary)) throw new Error('当前问题在限定时间内没有返回 Canary 标记'); if (/生成中|Generating|失败|超时|failed/i.test(tail)) throw new Error('回答未完成或页面显示失败状态'); checks.push(makeCheck('chat_stream', 'passed', streamAt, { message: response ? `HTTP ${response.status()}` : null })); } catch (error) { checks.push(makeCheck('chat_stream', 'failed', streamAt, { errorCode: classify(error), message: brief(error) })); }
+    const restoreAt = Date.now(); if (checks[1]?.status === 'passed') { try { await page.reload({ waitUntil: 'domcontentloaded' }); await ensureChat(page); const text = await page.locator('main').innerText(); if (!text.includes(question) || !text.includes(canary)) throw new Error('刷新后未恢复本次会话'); checks.push(makeCheck('session_restore', 'passed', restoreAt)); } catch (error) { checks.push(makeCheck('session_restore', 'failed', restoreAt, { errorCode: classify(error), message: brief(error) })); } } else checks.push(makeCheck('session_restore', 'error', restoreAt, { errorCode: 'PREREQUISITE_FAILED', message: 'chat_stream failed' }));
+  } else { checks.push(makeCheck('chat_stream', 'error', Date.now(), { errorCode: 'PREREQUISITE_FAILED', message: 'auth_state failed' })); checks.push(makeCheck('session_restore', 'error', Date.now(), { errorCode: 'PREREQUISITE_FAILED', message: 'auth_state failed' })); }
+} catch (error) { for (const key of ['auth_state', 'chat_stream', 'session_restore']) if (!checks.some((item) => item.key === key)) checks.push(makeCheck(key, 'error', Date.now(), { errorCode: classify(error), message: brief(error) })); } finally { const screenshot = path.join(runDir, 'page.png'); const trace = path.join(runDir, 'trace.zip'); await page?.screenshot({ path: screenshot, fullPage: true }).catch(() => {}); await context?.tracing.stop({ path: trace }).catch(() => {}); await browser?.close().catch(() => {}); }
+const status = checks.every((item) => item.status === 'passed') ? 'passed' : (checks.some((item) => item.status === 'error') ? 'error' : 'failed'); const report = { runId, sequence: Number(process.env.SYNTHETIC_MONITOR_SEQUENCE || Date.now()), startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), status, durationMs: Date.now() - startedAt.getTime(), checks, errorSummary: status === 'passed' ? null : checks.filter((item) => item.status !== 'passed').map((item) => `${item.key}:${item.errorCode}`).join(', ') }; await fs.writeFile(path.join(runDir, 'result.json'), JSON.stringify(report, null, 2)); const evidence = status === 'passed' ? { screenshot: path.join(runDir, 'page.png') } : { screenshot: path.join(runDir, 'page.png'), trace: path.join(runDir, 'trace.zip') }; try { await sendReport(report, evidence); } catch { await spool(report, evidence); } console.log(JSON.stringify({ runId, status, checks: checks.map(({ key, status: checkStatus, errorCode }) => ({ key, status: checkStatus, errorCode })) })); if (status !== 'passed') process.exitCode = 1;

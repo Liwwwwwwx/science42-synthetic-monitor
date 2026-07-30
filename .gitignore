@@ -1,0 +1,14 @@
+node_modules/
+playwright/.auth/
+artifacts/monitor-spool/
+artifacts/core-monitor/*/
+!artifacts/core-monitor/monitor-state.json
+.env
+.env.local
+.env.runner
+.env.production
+deploy/*.env
+deploy/*.local
+deploy/*.state.json
+*.trace.zip
+*.storage-state.json

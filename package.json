@@ -12,8 +12,9 @@
     "probe:team-api": "node api/team-interface-probe.mjs",
     "test:case-catalog": "playwright test playwright/case-catalog.spec.mjs --project=chromium --workers=1",
     "test:sr30": "playwright test playwright/session-recovery.spec.mjs --project=chromium",
-    "monitor": "powershell -ExecutionPolicy Bypass -File monitor/run-monitor.ps1"
-    ,"monitor:core": "powershell -ExecutionPolicy Bypass -File monitor/run-core-monitor.ps1"
+    "monitor": "powershell -ExecutionPolicy Bypass -File monitor/run-monitor.ps1",
+    "monitor:core": "node monitor/core-flow-monitor.mjs",
+    "monitor:core:admin-local": "node monitor/run-admin-local.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0"
