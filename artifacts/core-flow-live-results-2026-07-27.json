@@ -1,0 +1,76 @@
+{
+  "environment": "http://192.168.0.112:23191",
+  "executedAt": "2026-07-27T17:47:38+08:00",
+  "executionMode": "已登录浏览器中的已有会话，避免创建新会话触发 100/100 上限",
+  "cases": [
+    {
+      "id": "CORE-live-calc",
+      "question": "[CORE-live-calc] Calculate 987654321 * 123456789. Output only the integer.",
+      "elapsedMs": 2125,
+      "returnedContent": "计算 987654321×123456789 的过程如下：可以将 123456789 拆分为 123456790−1，随后给出精确结果 121932631112635269；页面最后又出现重复的精确结果段落。",
+      "expectedCheck": "只输出整数 121932631112635269",
+      "status": "failed_format",
+      "finding": "计算结果出现，但没有遵守只输出整数约束，返回了完整推理过程和重复结果。"
+    },
+    {
+      "id": "CORE-live-json",
+      "question": "[CORE-live-json] Output only valid JSON: {\"name\":\"Zhang San\",\"age\":18}",
+      "elapsedMs": 1106,
+      "returnedContent": "{\"name\":\"Zhang San\",\"age\":18}",
+      "expectedCheck": "可解析 JSON，name 和 age 字段正确，不能带额外文本",
+      "status": "passed",
+      "finding": "页面返回可解析的 JSON，满足格式要求。"
+    },
+    {
+      "id": "CORE-live-list",
+      "question": "[CORE-live-list] List exactly three items: test, record, review.",
+      "elapsedMs": 2568,
+      "returnedContent": "\":\"Zhang San\",\"age\":18}",
+      "expectedCheck": "恰好三项，包含 test、record、review",
+      "status": "failed_content",
+      "finding": "返回内容是上一条 JSON 的残片，没有按本条问题生成三点列表，存在回答串台/结果污染。"
+    },
+    {
+      "id": "CORE-live-long",
+      "question": "[CORE-live-long] Explain HTTP 504, its difference from client timeout, and give two troubleshooting steps in about 120 words.",
+      "elapsedMs": 4963,
+      "returnedContent": "HTTP 504 网关超时表示服务器作为网关或代理，未能在指定时间内从上游服务器收到有效响应。这与客户端超时不同：前者是服务器端因上游服务无响应而主动返回的错误，后者是客户端在等待响应过程中自行中断连接，服务器端可能仍在处理。排查步骤：1. 检查上游服务（如数据库或微服务）的负载、日志及健康状态，确认是否存在阻塞或崩溃；2. 优化网关或代理服务器的超时配置，或增加上游服务的处理资源与连接池容量，以提升响应速度。",
+      "expectedCheck": "包含 504、客户端超时区别、两项排查步骤，回答长度达到要求",
+      "status": "passed",
+      "finding": "长文本返回完整，关键概念和两项排查步骤均存在。"
+    },
+    {
+      "id": "CORE-live-context-1",
+      "question": "[CORE-live-context-1] Remember this code word: ORANGE-42. Reply with ACK only.",
+      "elapsedMs": 3517,
+      "returnedContent": "ACK",
+      "expectedCheck": "只返回 ACK",
+      "status": "passed",
+      "finding": "满足严格短输出要求。"
+    },
+    {
+      "id": "CORE-live-context-2",
+      "question": "[CORE-live-context-2] What code word did I ask you to remember? Reply with the exact code word.",
+      "elapsedMs": 4845,
+      "returnedContent": "在上一轮对话（[CORE-live-context-1]）中，用户明确要求记忆的代码词是 ORANGE-42。根据指令要求，此处直接输出该代码词。\nORANGE-42",
+      "expectedCheck": "返回 ORANGE-42 且上下文一致",
+      "status": "passed_with_extra_text",
+      "finding": "上下文记忆正确，但没有严格只输出代码词，存在额外解释。"
+    }
+  ],
+  "restore": {
+    "elapsedMs": 7311,
+    "questionRestored": true,
+    "answerRestored": true,
+    "inputVisible": true,
+    "status": "passed"
+  },
+  "httpSmoke": {
+    "iterations": 10,
+    "checks": 30,
+    "checksPassed": 30,
+    "httpFailures": 0,
+    "p95Ms": 264.03,
+    "status": "passed"
+  }
+}
