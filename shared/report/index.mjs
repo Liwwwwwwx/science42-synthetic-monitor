@@ -164,7 +164,40 @@ export async function publishResult(envelope, evidence = {}) {
 }
 
 export function mapItemStatus(status) {
-  if (status === 'completed' || status === 'passed') return 'passed';
-  if (status === 'error') return 'error';
+  if (status === 'completed' || status === 'passed' || status === 'PASSED' || status === 'DISCOVERED') return 'passed';
+  if (status === 'error' || status === 'BLOCKED') return 'error';
   return 'failed';
 }
+
+/**
+ * Build envelope from checks and publish (local + optional Admin).
+ * @param {{ suiteId: string, startedAt: Date|string, checks: Array, errorSummary?: string|null, evidence?: object }} input
+ */
+export async function finishSuiteReport(input) {
+  const checks = input.checks || [];
+  const allPassed = checks.length > 0 && checks.every((c) => c.status === 'passed');
+  const hasError = checks.some((c) => c.status === 'error');
+  const status = allPassed ? 'passed' : hasError && !checks.some((c) => c.status === 'failed') ? 'error' : 'failed';
+  const envelope = buildEnvelope({
+    suiteId: input.suiteId,
+    status,
+    checks,
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt || new Date(),
+    errorSummary:
+      input.errorSummary
+      ?? (status === 'passed' ? null : checks.filter((c) => c.status !== 'passed').map((c) => c.key).join(',')),
+  });
+  return publishResult(envelope, input.evidence || {});
+}
+
+/** Normalize a check key: lowercase snake, max 64. */
+export function checkKey(raw, fallback = 'item') {
+  const s = String(raw || fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+  return s && /^[a-z]/.test(s) ? s : `c_${s || fallback}`.slice(0, 64);
+}
+

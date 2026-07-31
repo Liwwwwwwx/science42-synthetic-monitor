@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
+import { checkKey, finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs';
 
 // 批量点击正式站点聊天页中的案例卡片 Run，并保存每个案例的页面输出。
 // 账号登录和滑块验证必须由人工完成；脚本不读取或绕过验证码数据。
@@ -10,6 +11,7 @@ const CASE_LIMIT = Number(process.env.CASE_LIMIT || 0);
 const DRY_RUN = process.env.CASE_DRY_RUN === '1';
 const CHAT_PATH = '/#/chat';
 const SESSION_STATE_PATH = process.env.SCIENCE42_SESSION_STATE || 'shared/auth/.auth/science42-session.json';
+const SUITE_ID = 'batch_cases';
 
 const CATEGORY_LABEL = {
   physics: '物理求解',
@@ -140,6 +142,7 @@ async function restoreSessionStorage(page) {
 }
 
 test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, testInfo) => {
+  const suiteStartedAt = new Date();
   test.setTimeout(Math.max(180_000, RUN_TIMEOUT * 2));
   await restoreSessionStorage(page);
   // The production SPA can keep background resources open indefinitely.
@@ -258,11 +261,36 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     matchedCount: titles.length,
     results
   };
-  const outputDir = path.join('artifacts', 'internal-cases', CATEGORY);
+  const outputDir = path.join('results/runs/batch_cases', CATEGORY);
   await fs.mkdir(outputDir, { recursive: true });
   const outputFile = path.join(outputDir, `batch-case-results-${new Date().toISOString().replaceAll(':', '-')}.json`);
   await fs.writeFile(outputFile, JSON.stringify(report, null, 2), 'utf8');
   await testInfo.attach('batch-case-results.json', { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+
+  const checks = results.length
+    ? results.map((r, i) => ({
+        key: checkKey(r.title || `case_${i + 1}`, `case_${i + 1}`),
+        status: mapItemStatus(r.status),
+        durationMs: r.durationMs || 0,
+        errorCode: ['PASSED', 'DISCOVERED'].includes(r.status) ? null : (r.status || 'FAILED'),
+        message: `${r.category || CATEGORY}: ${r.title || r.reason || ''}`.slice(0, 500),
+      }))
+    : [{
+        key: 'no_cases',
+        status: 'error',
+        durationMs: 0,
+        errorCode: 'NO_CASES',
+        message: '未找到可执行案例',
+      }];
+  // Prefix keys with category to keep unique across batch-all
+  for (const c of checks) c.key = checkKey(`${CATEGORY}_${c.key}`, `${CATEGORY}_item`);
+  await finishSuiteReport({
+    suiteId: SUITE_ID,
+    startedAt: suiteStartedAt,
+    checks,
+    errorSummary: results.filter((r) => !['PASSED', 'DISCOVERED'].includes(r.status)).map((r) => r.title || r.status).join(',').slice(0, 500) || null,
+  });
+
   const unsuccessful = results.filter(result => ['FAILED', 'TIMEOUT'].includes(result.status));
   expect(unsuccessful, '至少一个案例未成功完成 Run').toHaveLength(0);
   // 阻塞必须让 CI 失败，避免“未登录/未找到案例”被误报为测试通过。

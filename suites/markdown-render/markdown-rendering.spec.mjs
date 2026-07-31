@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { loginIfNeeded, newConversation } from '../../shared/lib/helpers.mjs';
+import { finishSuiteReport } from '../../shared/report/index.mjs';
+
+const SUITE_ID = 'markdown_render';
 
 const prompts = [
   {
@@ -61,11 +64,13 @@ const prompts = [
 ];
 
 test('Markdown/LaTeX rendering: table, code, math, text-style', async ({ page }, testInfo) => {
+  const startedAt = new Date();
   test.setTimeout(300_000);
   await loginIfNeeded(page);
 
   const results = [];
   for (const { id, question, check } of prompts) {
+    const itemStarted = Date.now();
     await newConversation(page);
     const input = page.locator('.chat-input textarea, [contenteditable], textarea[placeholder]').last();
     await input.fill(question);
@@ -84,13 +89,25 @@ test('Markdown/LaTeX rendering: table, code, math, text-style', async ({ page },
       await page.waitForTimeout(2000);
     }
 
-    results.push({ id, question, passed, error, capturedAt: new Date().toISOString() });
+    results.push({ id, question, passed, error, durationMs: Date.now() - itemStarted, capturedAt: new Date().toISOString() });
     console.log(`[render] ${id}: ${passed ? 'PASS' : 'FAIL'}${error ? ' — ' + error : ''}`);
   }
 
   await testInfo.attach('render-results.json', {
     body: JSON.stringify(results, null, 2),
     contentType: 'application/json',
+  });
+
+  await finishSuiteReport({
+    suiteId: SUITE_ID,
+    startedAt,
+    checks: results.map((r) => ({
+      key: r.id.replace(/-/g, '_'),
+      status: r.passed ? 'passed' : 'failed',
+      durationMs: r.durationMs,
+      errorCode: r.passed ? null : 'RENDER_FAILED',
+      message: r.question.slice(0, 500),
+    })),
   });
 
   const failed = results.filter(r => !r.passed);

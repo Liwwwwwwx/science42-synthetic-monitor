@@ -9,7 +9,7 @@
       "path": "suites/smoke-s10",
       "npm": "test:s10",
       "reportsToBackend": "ready",
-      "summary": "10 道固定题，每题独立会话；配 Runner 凭证后自动上报"
+      "summary": "10 道固定题，每题独立会话"
     },
     {
       "id": "long_chat_s30b",
@@ -17,7 +17,7 @@
       "kind": "suite",
       "path": "suites/long-chat-s30b",
       "npm": "test:s30b",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "同一会话连续 30 问"
     },
     {
@@ -26,7 +26,7 @@
       "kind": "suite",
       "path": "suites/core-regression",
       "npm": "test:core-regression",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "算术/JSON/列表/长文本 + 刷新恢复"
     },
     {
@@ -35,7 +35,7 @@
       "kind": "suite",
       "path": "suites/session-recovery",
       "npm": "test:sr30",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "完成后刷新页面，对话不丢失"
     },
     {
@@ -44,7 +44,7 @@
       "kind": "suite",
       "path": "suites/case-catalog",
       "npm": "test:case-catalog",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "检查 /cases 卡片与分类入口"
     },
     {
@@ -53,7 +53,7 @@
       "kind": "suite",
       "path": "suites/markdown-render",
       "npm": "test:markdown",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "表格/代码/公式/样式渲染"
     },
     {
@@ -62,8 +62,17 @@
       "kind": "suite",
       "path": "suites/capture-responses",
       "npm": "capture:responses",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "保存完整 AI 回复供人工审核"
+    },
+    {
+      "id": "batch_cases",
+      "name": "研发案例批量",
+      "kind": "suite",
+      "path": "suites/batch-cases",
+      "npm": "test:batch-cases",
+      "reportsToBackend": "ready",
+      "summary": "按分类批量点 Run 并记录结果"
     },
     {
       "id": "team_api",
@@ -71,7 +80,7 @@
       "kind": "probe",
       "path": "probes/team-api",
       "npm": "probe:team-api",
-      "reportsToBackend": "planned",
+      "reportsToBackend": "ready",
       "summary": "团队只读接口可达性"
     },
     {
