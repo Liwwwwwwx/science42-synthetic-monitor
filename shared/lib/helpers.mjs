@@ -31,12 +31,25 @@ export async function loginIfNeeded(page) {
 
 export async function newConversation(page) {
   await page.goto(cfg.chatPath);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
+  // Science42 新版首页 input 默认 disabled，点分类标签激活对话
+  const input = page.locator(cfg.selectors.input).last();
+  if (await input.isVisible().catch(() => false) && await input.isDisabled().catch(() => false)) {
+    for (const label of ['数据建模', '数学建模', '物理求解', '材料计算', 'AdvancedResearch']) {
+      const tag = page.locator('main').getByText(label, { exact: true }).first();
+      if (await tag.count() === 1 && await tag.isVisible().catch(() => false)) {
+        await tag.click().catch(() => {});
+        await page.waitForTimeout(1000);
+        break;
+      }
+    }
+  }
 }
 
 export async function sendAndMeasure(page, question) {
   const input = page.locator(cfg.selectors.input).last();
   await expect(input).toBeVisible();
+  await expect(input).toBeEnabled({ timeout: 15_000 });
   const started = Date.now();
   await input.fill(question);
   const responsePromise = page.waitForResponse(r => r.url().includes('/api/') && r.request().method() !== 'OPTIONS').catch(() => null);
