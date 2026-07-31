@@ -13,6 +13,7 @@ const spoolRoot = process.env.MONITOR_SPOOL_DIR || 'artifacts/monitor-spool';
 const reportUrl = process.env.SYNTHETIC_MONITOR_REPORT_URL || '';
 const runnerId = process.env.SYNTHETIC_MONITOR_RUNNER_ID || '';
 const runnerToken = process.env.SYNTHETIC_MONITOR_RUNNER_TOKEN || '';
+const localArtifactRetentionDays = Number(process.env.LOCAL_ARTIFACT_RETENTION_DAYS || 7);
 const runId = crypto.randomUUID(); const runDir = path.join(artifactRoot, runId);
 function makeCheck(key, status, started, extra = {}) { return { key, status, durationMs: Date.now() - started, errorCode: extra.errorCode || null, message: extra.message || null }; }
 function classify(error) { const message = String(error?.message || error); if (/登录状态失效|storageState|登录/i.test(message)) return 'AUTH_EXPIRED'; if (/100\/100|对话已达上限/i.test(message)) return 'CONVERSATION_LIMIT'; if (/timeout|超时/i.test(message)) return 'TIMEOUT'; if (/locator|input/i.test(message)) return 'SELECTOR_UNAVAILABLE'; return 'CHECK_FAILED'; }
@@ -21,6 +22,34 @@ async function ensureChat(page) { await page.goto(new URL(entryPath, baseUrl).hr
 async function sendReport(report, evidence) { if (!reportUrl || !runnerId || !runnerToken) throw new Error('Synthetic report endpoint or runner credentials are not configured'); const form = new FormData(); form.set('payload', JSON.stringify(report)); for (const [key, file] of Object.entries(evidence)) if (file) form.set(key, new Blob([await fs.readFile(file)], { type: key === 'trace' ? 'application/zip' : 'image/png' }), path.basename(file)); const response = await fetch(`${reportUrl.replace(/\/$/, '')}/api/synthetic-monitoring/runners/${encodeURIComponent(runnerId)}/runs`, { method: 'POST', headers: { 'X-Synthetic-Monitor-Token': runnerToken }, body: form, signal: AbortSignal.timeout(30_000) }); if (!response.ok) throw new Error(`Synthetic report rejected: HTTP ${response.status}`); }
 async function spool(report, evidence) { await fs.mkdir(spoolRoot, { recursive: true, mode: 0o700 }); await fs.writeFile(path.join(spoolRoot, `${report.finishedAt.replaceAll(':', '-')}-${report.runId}.json`), JSON.stringify({ report, evidence }), { mode: 0o600 }); }
 async function flushSpool() { if (!reportUrl || !runnerId || !runnerToken) return; for (const file of (await fs.readdir(spoolRoot).catch(() => [])).filter((name) => name.endsWith('.json')).sort()) { try { const item = JSON.parse(await fs.readFile(path.join(spoolRoot, file), 'utf8')); await sendReport(item.report, item.evidence); await fs.unlink(path.join(spoolRoot, file)); } catch {} } }
+async function protectedArtifactDirectories() {
+  const protectedDirs = new Set();
+  for (const file of (await fs.readdir(spoolRoot).catch(() => [])).filter((name) => name.endsWith('.json'))) {
+    try {
+      const { evidence = {} } = JSON.parse(await fs.readFile(path.join(spoolRoot, file), 'utf8'));
+      for (const evidencePath of Object.values(evidence)) if (typeof evidencePath === 'string') protectedDirs.add(path.dirname(evidencePath));
+    } catch {}
+  }
+  return protectedDirs;
+}
+async function cleanupLocalArtifacts({ delivered, status }) {
+  const protectedDirs = await protectedArtifactDirectories();
+  if (status === 'passed' && delivered) {
+    await fs.copyFile(path.join(runDir, 'page.png'), path.join(artifactRoot, 'latest-success.png')).catch(() => {});
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+  const cutoff = Date.now() - localArtifactRetentionDays * 86400_000;
+  for (const entry of await fs.readdir(artifactRoot, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(artifactRoot, entry.name);
+    if (candidate === runDir || protectedDirs.has(candidate)) continue;
+    const resultPath = path.join(candidate, 'result.json');
+    try {
+      const report = JSON.parse(await fs.readFile(resultPath, 'utf8'));
+      if (report.status === 'passed' || new Date(report.finishedAt).getTime() < cutoff) await fs.rm(candidate, { recursive: true, force: true });
+    } catch {}
+  }
+}
 if (!baseUrl) throw new Error('SCIENCE42_MONITOR_URL or SCIENCE42_BASE_URL is required'); await fs.mkdir(runDir, { recursive: true }); await flushSpool();
 const startedAt = new Date(); const checks = []; let page; let context; let browser; let question; let canary;
 try { browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' }); context = await browser.newContext({ storageState }); await context.tracing.start({ screenshots: true, snapshots: true, sources: true }); page = await context.newPage(); let input; const authAt = Date.now(); try { input = await ensureChat(page); checks.push(makeCheck('auth_state', 'passed', authAt)); } catch (error) { checks.push(makeCheck('auth_state', 'failed', authAt, { errorCode: classify(error), message: brief(error) })); }
@@ -28,4 +57,4 @@ try { browser = await chromium.launch({ headless: process.env.HEADLESS !== 'fals
     const restoreAt = Date.now(); if (checks[1]?.status === 'passed') { try { await page.reload({ waitUntil: 'domcontentloaded' }); await ensureChat(page); const text = await page.locator('main').innerText(); if (!text.includes(question) || !text.includes(canary)) throw new Error('刷新后未恢复本次会话'); checks.push(makeCheck('session_restore', 'passed', restoreAt)); } catch (error) { checks.push(makeCheck('session_restore', 'failed', restoreAt, { errorCode: classify(error), message: brief(error) })); } } else checks.push(makeCheck('session_restore', 'error', restoreAt, { errorCode: 'PREREQUISITE_FAILED', message: 'chat_stream failed' }));
   } else { checks.push(makeCheck('chat_stream', 'error', Date.now(), { errorCode: 'PREREQUISITE_FAILED', message: 'auth_state failed' })); checks.push(makeCheck('session_restore', 'error', Date.now(), { errorCode: 'PREREQUISITE_FAILED', message: 'auth_state failed' })); }
 } catch (error) { for (const key of ['auth_state', 'chat_stream', 'session_restore']) if (!checks.some((item) => item.key === key)) checks.push(makeCheck(key, 'error', Date.now(), { errorCode: classify(error), message: brief(error) })); } finally { const screenshot = path.join(runDir, 'page.png'); const trace = path.join(runDir, 'trace.zip'); await page?.screenshot({ path: screenshot, fullPage: true }).catch(() => {}); await context?.tracing.stop({ path: trace }).catch(() => {}); await browser?.close().catch(() => {}); }
-const status = checks.every((item) => item.status === 'passed') ? 'passed' : (checks.some((item) => item.status === 'error') ? 'error' : 'failed'); const report = { runId, sequence: Number(process.env.SYNTHETIC_MONITOR_SEQUENCE || Date.now()), startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), status, durationMs: Date.now() - startedAt.getTime(), checks, errorSummary: status === 'passed' ? null : checks.filter((item) => item.status !== 'passed').map((item) => `${item.key}:${item.errorCode}`).join(', ') }; await fs.writeFile(path.join(runDir, 'result.json'), JSON.stringify(report, null, 2)); const evidence = status === 'passed' ? { screenshot: path.join(runDir, 'page.png') } : { screenshot: path.join(runDir, 'page.png'), trace: path.join(runDir, 'trace.zip') }; try { await sendReport(report, evidence); } catch { await spool(report, evidence); } console.log(JSON.stringify({ runId, status, checks: checks.map(({ key, status: checkStatus, errorCode }) => ({ key, status: checkStatus, errorCode })) })); if (status !== 'passed') process.exitCode = 1;
+const status = checks.every((item) => item.status === 'passed') ? 'passed' : (checks.some((item) => item.status === 'error') ? 'error' : 'failed'); const report = { runId, sequence: Number(process.env.SYNTHETIC_MONITOR_SEQUENCE || Date.now()), startedAt: startedAt.toISOString(), finishedAt: new Date().toISOString(), status, durationMs: Date.now() - startedAt.getTime(), checks, errorSummary: status === 'passed' ? null : checks.filter((item) => item.status !== 'passed').map((item) => `${item.key}:${item.errorCode}`).join(', ') }; await fs.writeFile(path.join(runDir, 'result.json'), JSON.stringify(report, null, 2)); const evidence = status === 'passed' ? { screenshot: path.join(runDir, 'page.png') } : { screenshot: path.join(runDir, 'page.png'), trace: path.join(runDir, 'trace.zip') }; let delivered = false; try { await sendReport(report, evidence); delivered = true; } catch { await spool(report, evidence); } await cleanupLocalArtifacts({ delivered, status }).catch(() => {}); console.log(JSON.stringify({ runId, status, checks: checks.map(({ key, status: checkStatus, errorCode }) => ({ key, status: checkStatus, errorCode })) })); if (status !== 'passed') process.exitCode = 1;
