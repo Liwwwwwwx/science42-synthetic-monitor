@@ -57,15 +57,16 @@ export function toBackendPayload(envelope) {
     errorSummary = null;
   }
   return {
-    runId: envelope.runId,
-    sequence: envelope.sequence,
-    startedAt: envelope.startedAt,
-    finishedAt: envelope.finishedAt,
-    durationMs: envelope.durationMs,
-    status: envelope.status,
-    checks: envelope.checks,
-    errorSummary,
-  };
+      runId: envelope.runId,
+      sequence: envelope.sequence,
+      startedAt: envelope.startedAt,
+      finishedAt: envelope.finishedAt,
+      durationMs: envelope.durationMs,
+      status: envelope.status,
+      checks: envelope.checks,
+      errorSummary: envelope.errorSummary,
+      suiteId: envelope.suiteId || null,
+    };
 }
 
 export async function writeLocalResult(envelope) {
