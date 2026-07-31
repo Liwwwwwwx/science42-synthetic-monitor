@@ -1,19 +1,25 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { chromium } from '@playwright/test';
 import { cfg, requireEnv } from '../config/test-config.mjs';
+import { getTargetUrl, getStorageStatePath } from '../config/project.mjs';
 
-// Credentials are supplied only through environment variables and are never committed.
+// Credentials via env only; never committed.
 const testUser = process.env.SCIENCE42_USER;
 const testPassword = process.env.SCIENCE42_PASSWORD;
 requireEnv('SCIENCE42_USER', testUser);
 requireEnv('SCIENCE42_PASSWORD', testPassword);
-const baseUrl = process.env.SCIENCE42_BASE_URL || 'http://192.168.0.112:23191';
+
+const baseUrl = getTargetUrl();
+const storageState = getStorageStatePath();
+const sessionStatePath = process.env.SCIENCE42_SESSION_STATE
+  || path.join(path.dirname(storageState), 'science42-session.json');
 
 const browser = await chromium.launch({ headless: false });
 const context = await browser.newContext();
 const page = await context.newPage();
-await page.goto(new URL(process.env.SCIENCE42_ENTRY_PATH || '/#/cases', baseUrl).href, { waitUntil: 'domcontentloaded' });
-// Let the SPA finish rendering its authentication modal before inspecting the page.
+await page.goto(new URL(cfg.entryPath, baseUrl).href, { waitUntil: 'domcontentloaded' });
+// Let the SPA finish rendering its authentication modal.
 await page.waitForTimeout(3_000);
 
 async function firstVisible(selector) {
@@ -28,8 +34,8 @@ async function firstVisible(selector) {
 async function loginDialogVisible() {
   const candidates = [
     page.locator('div[class*="login-section"]'),
-    page.locator('[role="dialog"] input[placeholder*="\u624b\u673a"]'),
-    page.locator('[role="dialog"] input[placeholder*="\u5bc6\u7801"]')
+    page.locator('[role="dialog"] input[placeholder*="手机号"]'),
+    page.locator('[role="dialog"] input[placeholder*="密码"]'),
   ];
   for (const locator of candidates) {
     for (let i = 0; i < await locator.count(); i += 1) {
@@ -44,12 +50,12 @@ async function loggedInContentVisible() {
   const candidates = [
     page.locator('textarea'),
     page.locator('[class*="chat-action"]'),
-    page.getByText('\u7269\u7406\u6c42\u89e3', { exact: true }),
-    page.getByText('\u65b0\u5efa\u804a\u5929', { exact: true }),
+    page.getByText('物理求解', { exact: true }),
+    page.getByText('新建聊天', { exact: true }),
     page.locator('[class*="ActionCardPanel"]'),
-    page.getByText('\u79d1\u5b66\u7814\u7a76\u6848\u4f8b\u7ba1\u7406', { exact: true }),
-    page.getByText('\u7814\u7a76\u6848\u4f8b', { exact: true }),
-    page.getByRole('button', { name: '\u65b0\u5efa\u6848\u4f8b', exact: true })
+    page.getByText('科学研究案例管理', { exact: true }),
+    page.getByText('研究案例', { exact: true }),
+    page.getByRole('button', { name: '新建案例', exact: true }),
   ];
   for (const locator of candidates) {
     for (let i = 0; i < await locator.count(); i += 1) {
@@ -63,17 +69,15 @@ let username = null;
 let loginPassword = null;
 let loginOpened = false;
 
-// The login modal is rendered asynchronously after the initial page load.
-// Keep looking for it so the credentials are filled even when the modal is late.
 for (let i = 0; i < 60 && !(username && loginPassword); i += 1) {
   username = await firstVisible(
-    '#username, input[autocomplete="username"], input[placeholder*="\u624b\u673a"], input[placeholder*="\u90ae\u7bb1"]'
+    '#username, input[autocomplete="username"], input[placeholder*="手机号"], input[placeholder*="邮箱"]',
   );
   loginPassword = await firstVisible(
-    '#password, input[type="password"], input[placeholder*="\u5bc6\u7801"]'
+    '#password, input[type="password"], input[placeholder*="密码"]',
   );
   if (!(username && loginPassword) && !loginOpened) {
-    const loginButton = await firstVisible('button:has-text("\u767b\u5f55"), [role="button"]:has-text("\u767b\u5f55")');
+    const loginButton = await firstVisible('button:has-text("登录"), [role="button"]:has-text("登录")');
     if (loginButton) {
       await loginButton.click().catch(() => {});
       loginOpened = true;
@@ -88,7 +92,7 @@ if (username) {
   await loginPassword.fill(testPassword);
   const agreement = page.locator('input[type="checkbox"]');
   if (await agreement.count() === 1 && await agreement.isVisible().catch(() => false)) await agreement.check();
-  console.log('Credentials filled. Please complete the slider and click Login in the opened browser window.');
+  console.log('已填入账号。请在浏览器中完成滑块验证并点击登录。');
 } else {
   await page.screenshot({ path: 'artifacts/auth-setup-failure.png', fullPage: true }).catch(() => {});
   await browser.close();
@@ -107,13 +111,11 @@ if (!authenticated) {
   throw new Error('Login was not confirmed by visible chat or case content.');
 }
 
-await context.storageState({ path: 'playwright/.auth/science42.json' });
+await fs.mkdir(path.dirname(storageState), { recursive: true, mode: 0o700 });
+await context.storageState({ path: storageState });
 const sessionStorageState = await page.evaluate(() => Object.fromEntries(Object.entries(sessionStorage)));
-await fs.writeFile(
-  'playwright/.auth/science42-session.json',
-  JSON.stringify(sessionStorageState, null, 2),
-  'utf8'
-);
-console.log('Saved playwright/.auth/science42.json');
-console.log(`Saved playwright/.auth/science42-session.json (${Object.keys(sessionStorageState).length} entries)`);
+await fs.writeFile(sessionStatePath, JSON.stringify(sessionStorageState, null, 2), 'utf8');
+console.log(`已保存 ${storageState}`);
+console.log(`已保存 ${sessionStatePath} (${Object.keys(sessionStorageState).length} entries)`);
+console.log(`目标站 ${baseUrl}`);
 await browser.close();

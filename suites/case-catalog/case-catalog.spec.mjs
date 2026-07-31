@@ -26,8 +26,8 @@ test('研发案例目录与点击入口清单', async ({ page }, testInfo) => {
       note: '目录页当前主要提供案例列表和 ellipsis 菜单；如没有运行入口，需由平台补充稳定 data-testid 或实际执行 API。'
     }
   };
-  await fs.mkdir('artifacts/internal-cases', { recursive: true });
-  await fs.writeFile('artifacts/internal-cases/catalog.json', JSON.stringify(inventory, null, 2), 'utf8');
+  await fs.mkdir('results/runs/case_catalog', { recursive: true });
+  await fs.writeFile('results/runs/case_catalog/catalog.json', JSON.stringify(inventory, null, 2), 'utf8');
   await testInfo.attach('catalog.json', { body: JSON.stringify(inventory, null, 2), contentType: 'application/json' });
   expect(inventory.cards).toBeGreaterThanOrEqual(0);
 });

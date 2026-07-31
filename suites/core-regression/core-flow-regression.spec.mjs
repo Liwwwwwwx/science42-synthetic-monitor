@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
-import { cfg } from '../config/test-config.mjs';
-import { loginIfNeeded } from './helpers.mjs';
+import { cfg } from '../../shared/config/test-config.mjs';
+import { loginIfNeeded } from '../../shared/lib/helpers.mjs';
 
 const cases = [
   { id: 'calc', question: '[CORE-calc] Calculate 987654321 * 123456789. Output only the integer.', check: text => /121932631112635269/.test(text) },
@@ -54,7 +54,8 @@ test('CORE regression: login, send, stream, result, context, save and restore', 
   const after = await page.locator('main').innerText();
   const restored = after.includes('[CORE-context-2]') && after.includes('ORANGE-42');
   const summary = { environment: process.env.SCIENCE42_BASE_URL || 'http://192.168.0.112:23191', records, beforeLength: before.length, afterLength: after.length, restored, completed: records.filter(r => r.passed).length, total: records.length };
-  await fs.writeFile('artifacts/core-flow-regression.json', JSON.stringify(summary, null, 2), 'utf8');
+  await fs.mkdir('results/runs/core_regression', { recursive: true });
+  await fs.writeFile('results/runs/core_regression/latest.json', JSON.stringify(summary, null, 2), 'utf8');
   await testInfo.attach('core-flow-regression.json', { body: JSON.stringify(summary, null, 2), contentType: 'application/json' });
   expect(records.filter(r => r.passed), JSON.stringify(summary)).toHaveLength(cases.length);
   expect(restored, JSON.stringify(summary)).toBeTruthy();

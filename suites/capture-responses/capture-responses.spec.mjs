@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
-import questions from '../config/questions.json' with { type: 'json' };
-import { cfg } from '../config/test-config.mjs';
-import { loginIfNeeded, newConversation } from './helpers.mjs';
+import questions from '../../shared/config/questions.json' with { type: 'json' };
+import { cfg } from '../../shared/config/test-config.mjs';
+import { loginIfNeeded, newConversation } from '../../shared/lib/helpers.mjs';
 
 test('capture S-10 response content', async ({ page }, testInfo) => {
   test.setTimeout(900_000);
@@ -33,7 +33,8 @@ test('capture S-10 response content', async ({ page }, testInfo) => {
       capturedAt: new Date().toISOString()
     });
   }
-  await fs.writeFile('artifacts/response-content.json', JSON.stringify(records, null, 2), 'utf8');
+  await fs.mkdir('results/runs/capture_responses', { recursive: true });
+  await fs.writeFile('results/runs/capture_responses/latest.json', JSON.stringify(records, null, 2), 'utf8');
   await testInfo.attach('response-content.json', { body: JSON.stringify(records, null, 2), contentType: 'application/json' });
   expect(records).toHaveLength(questions.length);
 });

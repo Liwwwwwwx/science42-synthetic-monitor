@@ -5,7 +5,7 @@ const baseUrl = (process.env.SCIENCE42_API_URL || 'http://192.168.0.112:1120').r
 const timeoutMs = Number(process.env.API_TIMEOUT_MS || 10_000);
 const token = process.env.SCIENCE42_API_TOKEN || '';
 const cookie = process.env.SCIENCE42_COOKIE || '';
-const artifactRoot = process.env.API_ARTIFACT_DIR || 'artifacts/team-api';
+const artifactRoot = process.env.API_ARTIFACT_DIR || 'results/runs/team_api';
 const runId = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const runDir = path.join(artifactRoot, runId);
 await fs.mkdir(runDir, { recursive: true });

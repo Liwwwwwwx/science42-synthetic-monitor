@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginIfNeeded, newConversation } from './helpers.mjs';
+import { loginIfNeeded, newConversation } from '../../shared/lib/helpers.mjs';
 
 const prompts = [
   {

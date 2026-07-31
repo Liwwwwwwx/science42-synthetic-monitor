@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "description": "Stable suite IDs for Admin backend display. Do not rename ids without a migration.",
+  "suites": [
+    {
+      "id": "smoke_s10",
+      "name": "S-10 冒烟",
+      "kind": "suite",
+      "path": "suites/smoke-s10",
+      "npm": "test:s10",
+      "reportsToBackend": "planned",
+      "summary": "10 道固定题，每题独立会话"
+    },
+    {
+      "id": "long_chat_s30b",
+      "name": "S-30B 长对话",
+      "kind": "suite",
+      "path": "suites/long-chat-s30b",
+      "npm": "test:s30b",
+      "reportsToBackend": "planned",
+      "summary": "同一会话连续 30 问"
+    },
+    {
+      "id": "core_regression",
+      "name": "核心流程回归",
+      "kind": "suite",
+      "path": "suites/core-regression",
+      "npm": "test:core-regression",
+      "reportsToBackend": "planned",
+      "summary": "算术/JSON/列表/长文本 + 刷新恢复"
+    },
+    {
+      "id": "session_recovery",
+      "name": "会话恢复",
+      "kind": "suite",
+      "path": "suites/session-recovery",
+      "npm": "test:sr30",
+      "reportsToBackend": "planned",
+      "summary": "完成后刷新页面，对话不丢失"
+    },
+    {
+      "id": "case_catalog",
+      "name": "案例目录",
+      "kind": "suite",
+      "path": "suites/case-catalog",
+      "npm": "test:case-catalog",
+      "reportsToBackend": "planned",
+      "summary": "检查 /cases 卡片与分类入口"
+    },
+    {
+      "id": "markdown_render",
+      "name": "Markdown/LaTeX 渲染",
+      "kind": "suite",
+      "path": "suites/markdown-render",
+      "npm": "test:markdown",
+      "reportsToBackend": "planned",
+      "summary": "表格/代码/公式/样式渲染"
+    },
+    {
+      "id": "capture_responses",
+      "name": "响应内容抓取",
+      "kind": "suite",
+      "path": "suites/capture-responses",
+      "npm": "capture:responses",
+      "reportsToBackend": "planned",
+      "summary": "保存完整 AI 回复供人工审核"
+    },
+    {
+      "id": "team_api",
+      "name": "团队 API 探测",
+      "kind": "probe",
+      "path": "probes/team-api",
+      "npm": "probe:team-api",
+      "reportsToBackend": "planned",
+      "summary": "团队只读接口可达性"
+    },
+    {
+      "id": "core_link",
+      "name": "核心链路拨测",
+      "kind": "runner",
+      "path": "runners/core-link",
+      "npm": "monitor:core",
+      "reportsToBackend": "live",
+      "summary": "登录态 + 聊天流 + 会话恢复，上报 Admin 链路拨测",
+      "checks": ["auth_state", "chat_stream", "session_restore"]
+    }
+  ]
+}

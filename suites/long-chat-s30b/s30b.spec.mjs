@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
-import questions from '../config/questions.json' with { type: 'json' };
-import { loginIfNeeded, newConversation, sendAndMeasure } from './helpers.mjs';
-import { cfg } from '../config/test-config.mjs';
+import questions from '../../shared/config/questions.json' with { type: 'json' };
+import { loginIfNeeded, newConversation, sendAndMeasure } from '../../shared/lib/helpers.mjs';
+import { cfg } from '../../shared/config/test-config.mjs';
 
 test('S-30B: 30 sequential questions in one conversation', async ({ page }, testInfo) => {
   await loginIfNeeded(page);

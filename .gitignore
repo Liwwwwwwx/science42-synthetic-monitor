@@ -1,12 +1,6 @@
 node_modules/
+shared/auth/.auth/
 playwright/.auth/
-artifacts/monitor-spool/
-artifacts/core-monitor/*/
-!artifacts/core-monitor/monitor-state.json
-artifacts/*
-!artifacts/.gitkeep
-tools/
-test-results/
 .env
 .env.local
 .env.runner
@@ -16,5 +10,15 @@ deploy/*.local
 deploy/*.state.json
 *.trace.zip
 *.storage-state.json
+# runtime results
+results/
 test-results/
+tools/
+# legacy runtime dumps under artifacts (keep docs; ignore noisy dumps)
+artifacts/monitor-spool/
+artifacts/core-monitor/*/
+!artifacts/core-monitor/monitor-state.json
 artifacts/playwright-results.json
+artifacts/internal-cases/
+artifacts/auth-setup-failure.png
+artifacts/*-summary-*.json

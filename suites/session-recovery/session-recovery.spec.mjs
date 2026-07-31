@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { loginIfNeeded, sendAndMeasure } from './helpers.mjs';
-import { cfg } from '../config/test-config.mjs';
+import { loginIfNeeded, sendAndMeasure } from '../../shared/lib/helpers.mjs';
+import { cfg } from '../../shared/config/test-config.mjs';
 
 test('SR-30 smoke: completed conversation survives reload', async ({ page }) => {
   await loginIfNeeded(page);

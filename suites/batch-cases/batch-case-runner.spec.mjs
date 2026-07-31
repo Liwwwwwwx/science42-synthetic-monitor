@@ -9,7 +9,7 @@ const RUN_TIMEOUT = Number(process.env.CASE_RUN_TIMEOUT_MS || 120_000);
 const CASE_LIMIT = Number(process.env.CASE_LIMIT || 0);
 const DRY_RUN = process.env.CASE_DRY_RUN === '1';
 const CHAT_PATH = '/#/chat';
-const SESSION_STATE_PATH = process.env.SCIENCE42_SESSION_STATE || 'playwright/.auth/science42-session.json';
+const SESSION_STATE_PATH = process.env.SCIENCE42_SESSION_STATE || 'shared/auth/.auth/science42-session.json';
 
 const CATEGORY_LABEL = {
   physics: '物理求解',
