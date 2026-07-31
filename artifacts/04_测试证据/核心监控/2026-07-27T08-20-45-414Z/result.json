@@ -1,8 +1,0 @@
-{
-  "runId": "2026-07-27T08-20-45-414Z",
-  "time": "2026-07-27T08:20:45.414Z",
-  "environment": "http://192.168.0.112:23191",
-  "ok": false,
-  "error": "页面没有新增回答内容",
-  "evidence": "C:\\Users\\se42\\Documents\\Codex\\2026-07-27\\an-zh\\outputs\\science42-test-suite\\artifacts\\core-monitor\\2026-07-27T08-20-45-414Z"
-}

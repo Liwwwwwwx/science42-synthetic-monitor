@@ -11,6 +11,8 @@
     "test:core-regression": "playwright test playwright/core-flow-regression.spec.mjs --project=chromium --workers=1",
     "probe:team-api": "node api/team-interface-probe.mjs",
     "test:case-catalog": "playwright test playwright/case-catalog.spec.mjs --project=chromium --workers=1",
+    "test:batch-cases": "playwright test playwright/batch-case-runner.spec.mjs --project=chromium --workers=1",
+    "test:batch-all": "node playwright/run-all-case-categories.mjs",
     "test:sr30": "playwright test playwright/session-recovery.spec.mjs --project=chromium",
     "monitor": "powershell -ExecutionPolicy Bypass -File monitor/run-monitor.ps1",
     "monitor:core": "node monitor/core-flow-monitor.mjs",

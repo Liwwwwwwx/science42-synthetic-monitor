@@ -57,6 +57,21 @@ npm run monitor:core:admin-local
 
 ## 测试命令
 
+研发案例批量自动化测试：
+
+```powershell
+$env:SCIENCE42_BASE_URL='https://science42.tech'
+$env:SCIENCE42_ENTRY_PATH='/#/cases'
+$env:SCIENCE42_USER='测试账号'
+$env:SCIENCE42_PASSWORD='测试密码'
+node playwright/auth-setup.mjs
+$env:SCIENCE42_STORAGE_STATE="$PWD\playwright\.auth\science42.json"
+$env:CASE_LIMIT='0'
+npm run test:batch-all
+```
+
+该脚本自动选择物理、数学、材料分类，逐张卡片点击 `Run`，并保存输出、耗时和状态。`artifacts/` 仅保留本机测试结果，不提交到 Git。
+
 ```powershell
 npm run test:s10
 npm run test:s30b

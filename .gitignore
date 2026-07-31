@@ -3,6 +3,10 @@ playwright/.auth/
 artifacts/monitor-spool/
 artifacts/core-monitor/*/
 !artifacts/core-monitor/monitor-state.json
+artifacts/*
+!artifacts/.gitkeep
+tools/
+test-results/
 .env
 .env.local
 .env.runner
