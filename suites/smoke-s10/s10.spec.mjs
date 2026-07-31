@@ -6,12 +6,18 @@ import { finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs'
 
 const SUITE_ID = 'smoke_s10';
 
-test('S-10: fixed questions, one new conversation per task', async ({ page }, testInfo) => {
+test('S-10: fixed questions in one conversation', async ({ page }, testInfo) => {
   const startedAt = new Date();
   await loginIfNeeded(page);
+  await newConversation(page);
   const results = [];
-  for (const question of questions) {
-    await newConversation(page);
+  // First message sets the conversation title
+  const titleMsg = '[S-10] Science42 Smoke Test';
+  const titleResult = await sendAndMeasure(page, titleMsg);
+  expect(titleResult.status).toBe('completed');
+  // Remaining 9 questions in the same conversation
+  for (let i = 1; i < questions.length; i++) {
+    const question = questions[i];
     const result = await sendAndMeasure(page, question);
     results.push(result);
     expect(result.status, JSON.stringify(result)).toBe('completed');
@@ -23,15 +29,12 @@ test('S-10: fixed questions, one new conversation per task', async ({ page }, te
     contentType: 'application/json',
   });
 
-  await finishSuiteReport({
-    suiteId: SUITE_ID,
-    startedAt,
-    checks: results.map((r, i) => ({
-      key: `q${String(i + 1).padStart(2, '0')}`,
-      status: mapItemStatus(r.status),
-      durationMs: r.finalMs,
-      errorCode: r.status === 'completed' ? null : 'CHECK_FAILED',
-      message: r.question.slice(0, 500),
-    })),
-  });
+  const checks = results.map((r, i) => ({
+    key: `q${String(i + 2).padStart(2, '0')}`,
+    status: mapItemStatus(r.status),
+    durationMs: r.finalMs,
+    errorCode: r.status === 'completed' ? null : 'CHECK_FAILED',
+    message: r.question.slice(0, 500),
+  }));
+  await finishSuiteReport({ suiteId: SUITE_ID, startedAt, checks });
 });

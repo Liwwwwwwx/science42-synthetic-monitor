@@ -7,27 +7,36 @@ import { finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs'
 
 const SUITE_ID = 'capture_responses';
 
-test('capture S-10 response content', async ({ page }, testInfo) => {
+test('capture S-10 response content in one conversation', async ({ page }, testInfo) => {
   const startedAt = new Date();
   test.setTimeout(900_000);
   await loginIfNeeded(page);
+  await newConversation(page);
+
+  // Title message
+  const input = page.locator(cfg.selectors.input).last();
+  await expect(input).toBeEnabled({ timeout: 15_000 });
+  await input.fill('[Capture] Science42 响应抓取');
+  await input.press('Enter');
+  await page.waitForTimeout(2000);
+
   const records = [];
   for (const question of questions) {
-    await newConversation(page);
-    const input = page.locator(cfg.selectors.input).last();
-    await expect(input).toBeVisible();
+    await expect(input).toBeEnabled({ timeout: 10_000 });
     const started = Date.now();
     await input.fill(question);
     await input.press('Enter');
-    let paragraphTexts = [];
+    let prevLen = 0;
     let answerText = '';
     const deadline = Date.now() + cfg.maxTaskMs;
     while (Date.now() < deadline) {
       await page.waitForTimeout(500);
-      paragraphTexts = await page.locator('main p').allTextContents();
-      const idx = paragraphTexts.lastIndexOf(question);
-      answerText = idx >= 0 ? (paragraphTexts[idx + 1] || '').trim() : '';
-      if (answerText && !/生成中|Generating/.test(answerText)) break;
+      const full = await page.locator('main').innerText().catch(() => '');
+      if (full.length > prevLen + 10) {
+        answerText = full.slice(prevLen).trim();
+        if (!/生成中|Generating/i.test(answerText.slice(-200))) break;
+      }
+      prevLen = full.length;
     }
     records.push({
       index: records.length + 1,
@@ -38,6 +47,7 @@ test('capture S-10 response content', async ({ page }, testInfo) => {
       capturedAt: new Date().toISOString(),
     });
   }
+
   await fs.mkdir('results/runs/capture_responses', { recursive: true });
   await fs.writeFile('results/runs/capture_responses/latest.json', JSON.stringify(records, null, 2), 'utf8');
   await testInfo.attach('response-content.json', { body: JSON.stringify(records, null, 2), contentType: 'application/json' });
