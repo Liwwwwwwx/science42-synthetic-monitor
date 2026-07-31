@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "pw:install": "playwright install chromium",
-    "auth:setup": "node playwright/auth-setup.mjs",
+    "auth:setup": "node --env-file=.env playwright/auth-setup.mjs",
     "test:s10": "playwright test playwright/s10.spec.mjs --project=chromium",
     "test:s30b": "playwright test playwright/s30b.spec.mjs --project=chromium --workers=1",
     "capture:responses": "playwright test playwright/capture-responses.spec.mjs --project=chromium --workers=1",
@@ -19,6 +19,7 @@
     "monitor:core:admin-local": "node monitor/run-admin-local.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0"
+    "@playwright/test": "^1.55.0",
+    "dotenv": "^17.4.2"
   }
 }

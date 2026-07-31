@@ -16,6 +16,13 @@ export async function loginIfNeeded(page) {
     }
     await page.locator(cfg.selectors.login).click();
   }
+  // Dismiss any blocking modals (e.g. pricing/upgrade dialog)
+  await page.locator('.ant-modal-wrap').first().waitFor({ state: 'visible', timeout: 5_000 }).then(
+    async () => {
+      await page.locator('.ant-modal-close, .ant-modal-wrap button:has-text("取 消")').first().click();
+      await page.waitForTimeout(500);
+    }
+  ).catch(() => {});
   const returnChat = page.getByRole('button', { name: /返回聊天/ });
   if (await returnChat.count() === 1) await returnChat.click();
   else if (await page.locator(cfg.selectors.input).count() === 0) await page.goto(cfg.chatPath);
@@ -23,9 +30,8 @@ export async function loginIfNeeded(page) {
 }
 
 export async function newConversation(page) {
-  const add = page.locator('button:has(svg path[id="add_svg__a"]), button:has(svg.add_svg__icon), button[aria-label*="新建"], button[title*="新建"]');
-  if (await add.count() === 1) await add.click();
-  else await page.goto(cfg.chatPath);
+  await page.goto(cfg.chatPath);
+  await page.waitForTimeout(500);
 }
 
 export async function sendAndMeasure(page, question) {
