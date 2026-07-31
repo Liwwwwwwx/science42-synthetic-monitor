@@ -12,3 +12,4 @@ deploy/*.local
 deploy/*.state.json
 *.trace.zip
 *.storage-state.json
+artifacts/
