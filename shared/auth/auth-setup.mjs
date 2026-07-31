@@ -19,7 +19,6 @@ const browser = await chromium.launch({ headless: false });
 const context = await browser.newContext();
 const page = await context.newPage();
 await page.goto(new URL(cfg.entryPath, baseUrl).href, { waitUntil: 'domcontentloaded' });
-// Let the SPA finish rendering its authentication modal.
 await page.waitForTimeout(3_000);
 
 async function firstVisible(selector) {

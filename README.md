@@ -26,8 +26,8 @@ npm run test:markdown
 npm run capture:responses
 
 # 研发案例批量（物理/数学/材料）
-CASE_LIMIT=1 npm run test:batch-cases   # 单分类冒烟
-CASE_LIMIT=0 npm run test:batch-all     # 全部分类
+CASE_LIMIT=1 npm run test:batch-cases
+CASE_LIMIT=0 npm run test:batch-all
 
 npm run probe:team-api
 npm run monitor:core
@@ -37,4 +37,4 @@ npm run monitor:core
 
 - `results/runs/<suiteId>/`
 - `results/playwright-output/`
-- 批量案例摘要：`results/runs/batch_cases/`（或 artifacts/internal-cases 兼容路径）
+- 批量案例：`results/runs/batch_cases/`

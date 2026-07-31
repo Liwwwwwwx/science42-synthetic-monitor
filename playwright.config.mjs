@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { defineConfig } from '@playwright/test';
+import { getTargetUrl, getStorageStatePath } from './shared/config/project.mjs';
 
 export default defineConfig({
   testDir: './suites',
@@ -12,12 +13,12 @@ export default defineConfig({
     ['json', { outputFile: 'results/playwright-results.json' }],
   ],
   use: {
-    baseURL: process.env.SCIENCE42_BASE_URL || 'http://192.168.0.112:23191',
+    baseURL: getTargetUrl(),
     headless: process.env.HEADLESS !== 'false',
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    storageState: process.env.SCIENCE42_STORAGE_STATE || undefined,
+    storageState: process.env.SCIENCE42_STORAGE_STATE || getStorageStatePath(),
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
 });

@@ -1,13 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { PROJECT, getReportConfig } from '../config/project.mjs';
 
 /**
- * Unified suite/runner report envelope for Science Admin synthetic monitoring.
- * When Runner credentials are missing, only writes local results/ (dev-friendly).
+ * Project-wide reporter: all suites share one Admin runner credential.
+ * Missing credentials → local results only (tests still pass).
  */
-
-const SPOOL_DIR = process.env.MONITOR_SPOOL_DIR || 'results/spool';
 
 /**
  * @param {object} input
@@ -33,6 +32,8 @@ export function buildEnvelope(input) {
   }));
   return {
     schemaVersion: 1,
+    projectId: PROJECT.id,
+    targetUrl: PROJECT.targetUrl,
     suiteId: input.suiteId,
     runId: input.runId || crypto.randomUUID(),
     sequence: input.sequence || Date.now(),
@@ -45,8 +46,16 @@ export function buildEnvelope(input) {
   };
 }
 
-/** Backend payload: omit suiteId (not validated yet); keep API-compatible fields. */
+/** Backend API payload (current Admin contract). */
 export function toBackendPayload(envelope) {
+  const summaryPrefix = `[${envelope.suiteId}] `;
+  let errorSummary = envelope.errorSummary;
+  if (errorSummary) {
+    errorSummary = `${summaryPrefix}${errorSummary}`.slice(0, 500);
+  } else if (envelope.suiteId) {
+    // Keep suite identity visible in Admin until suiteId column exists
+    errorSummary = null;
+  }
   return {
     runId: envelope.runId,
     sequence: envelope.sequence,
@@ -55,12 +64,12 @@ export function toBackendPayload(envelope) {
     durationMs: envelope.durationMs,
     status: envelope.status,
     checks: envelope.checks,
-    errorSummary: envelope.errorSummary,
+    errorSummary,
   };
 }
 
 export async function writeLocalResult(envelope) {
-  const dir = path.join('results', 'runs', envelope.suiteId || 'unknown');
+  const dir = path.join(PROJECT.resultsDir, envelope.suiteId || 'unknown');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `${envelope.finishedAt.replaceAll(':', '-')}-${envelope.runId}.json`);
   const latest = path.join(dir, 'latest.json');
@@ -71,11 +80,9 @@ export async function writeLocalResult(envelope) {
 }
 
 async function postReport(envelope, evidence = {}) {
-  const reportUrl = (process.env.SYNTHETIC_MONITOR_REPORT_URL || '').replace(/\/$/, '');
-  const runnerId = process.env.SYNTHETIC_MONITOR_RUNNER_ID || '';
-  const token = process.env.SYNTHETIC_MONITOR_RUNNER_TOKEN || '';
-  if (!reportUrl || !runnerId || !token) {
-    return { skipped: true, reason: 'missing_runner_credentials' };
+  const { reportUrl, runnerId, token, configured } = getReportConfig();
+  if (!configured) {
+    return { skipped: true, reason: 'missing_project_admin_credentials' };
   }
 
   const form = new FormData();
@@ -107,25 +114,24 @@ async function postReport(envelope, evidence = {}) {
 }
 
 async function spool(envelope, evidence = {}) {
-  await fs.mkdir(SPOOL_DIR, { recursive: true, mode: 0o700 });
+  const { spoolDir } = getReportConfig();
+  await fs.mkdir(spoolDir, { recursive: true, mode: 0o700 });
   const name = `${envelope.finishedAt.replaceAll(':', '-')}-${envelope.runId}.json`;
   await fs.writeFile(
-    path.join(SPOOL_DIR, name),
+    path.join(spoolDir, name),
     JSON.stringify({ report: toBackendPayload(envelope), suiteId: envelope.suiteId, evidence }),
     { mode: 0o600 },
   );
 }
 
 export async function flushSpool() {
-  const reportUrl = (process.env.SYNTHETIC_MONITOR_REPORT_URL || '').replace(/\/$/, '');
-  const runnerId = process.env.SYNTHETIC_MONITOR_RUNNER_ID || '';
-  const token = process.env.SYNTHETIC_MONITOR_RUNNER_TOKEN || '';
-  if (!reportUrl || !runnerId || !token) return { flushed: 0 };
+  const { reportUrl, runnerId, token, configured, spoolDir } = getReportConfig();
+  if (!configured) return { flushed: 0 };
 
   let flushed = 0;
-  const files = (await fs.readdir(SPOOL_DIR).catch(() => [])).filter((n) => n.endsWith('.json')).sort();
+  const files = (await fs.readdir(spoolDir).catch(() => [])).filter((n) => n.endsWith('.json')).sort();
   for (const file of files) {
-    const full = path.join(SPOOL_DIR, file);
+    const full = path.join(spoolDir, file);
     try {
       const item = JSON.parse(await fs.readFile(full, 'utf8'));
       const envelope = { ...item.report, suiteId: item.suiteId || 'unknown' };
@@ -133,35 +139,30 @@ export async function flushSpool() {
       await fs.unlink(full);
       flushed += 1;
     } catch {
-      /* keep spool entry */
+      /* keep */
     }
   }
   return { flushed };
 }
 
-/**
- * Write local result, try upload; spool on failure. Never throws for missing credentials.
- * @returns {Promise<{local: object, report: object}>}
- */
 export async function publishResult(envelope, evidence = {}) {
   await flushSpool();
   const local = await writeLocalResult(envelope);
   try {
     const report = await postReport(envelope, evidence);
     if (report.skipped) {
-      console.log(`[report] ${envelope.suiteId} saved locally only (${report.reason})`);
+      console.log(`[report] ${envelope.suiteId} → 仅本地 (${report.reason})；全项目共用一套 ADMIN_* 凭证即可上报`);
     } else {
-      console.log(`[report] ${envelope.suiteId} uploaded runId=${envelope.runId} duplicate=${!!report.duplicate}`);
+      console.log(`[report] ${envelope.suiteId} → Admin runId=${envelope.runId} duplicate=${!!report.duplicate}`);
     }
     return { local, report };
   } catch (error) {
     await spool(envelope, evidence);
-    console.warn(`[report] ${envelope.suiteId} upload failed, spooled: ${error.message}`);
+    console.warn(`[report] ${envelope.suiteId} 上报失败已入 spool: ${error.message}`);
     return { local, report: { skipped: false, spooled: true, error: error.message } };
   }
 }
 
-/** Map Playwright item status to report check status. */
 export function mapItemStatus(status) {
   if (status === 'completed' || status === 'passed') return 'passed';
   if (status === 'error') return 'error';

@@ -2,17 +2,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
+import { PROJECT, getTargetUrl, getStorageStatePath, getReportConfig } from '../../shared/config/project.mjs';
 
-const baseUrl = process.env.SCIENCE42_MONITOR_URL || process.env.SCIENCE42_BASE_URL;
-const entryPath = process.env.SCIENCE42_ENTRY_PATH || '/#/cases';
-const chatPath = process.env.SCIENCE42_CHAT_PATH || '/#/chat';
-const storageState = process.env.SCIENCE42_STORAGE_STATE || 'shared/auth/.auth/science42.json';
+const _report = getReportConfig();
+const baseUrl = process.env.SCIENCE42_MONITOR_URL || getTargetUrl();
+const entryPath = process.env.SCIENCE42_ENTRY_PATH || PROJECT.entryPath;
+const chatPath = process.env.SCIENCE42_CHAT_PATH || PROJECT.chatPath;
+const storageState = getStorageStatePath();
 const maxTaskMs = Number(process.env.MAX_TASK_MS || 75_000);
-const artifactRoot = process.env.MONITOR_ARTIFACT_DIR || 'results/runs/core_link';
-const spoolRoot = process.env.MONITOR_SPOOL_DIR || 'results/spool';
-const reportUrl = process.env.SYNTHETIC_MONITOR_REPORT_URL || '';
-const runnerId = process.env.SYNTHETIC_MONITOR_RUNNER_ID || '';
-const runnerToken = process.env.SYNTHETIC_MONITOR_RUNNER_TOKEN || '';
+const artifactRoot = process.env.MONITOR_ARTIFACT_DIR || path.join(PROJECT.resultsDir, 'core_link');
+const spoolRoot = _report.spoolDir;
+const reportUrl = _report.reportUrl;
+const runnerId = _report.runnerId;
+const runnerToken = _report.token;
 const localArtifactRetentionDays = Number(process.env.LOCAL_ARTIFACT_RETENTION_DAYS || 7);
 const runId = crypto.randomUUID(); const runDir = path.join(artifactRoot, runId);
 function makeCheck(key, status, started, extra = {}) { return { key, status, durationMs: Date.now() - started, errorCode: extra.errorCode || null, message: extra.message || null }; }

@@ -1,64 +1,54 @@
-# 项目地图（先看这个）
+# 项目地图
 
-本仓库做两件事，**目录按职责拆开**，不要混着记。
+## 这是什么
 
-## 总览
-
-```text
-suites/     质量测试套件（本地/CI 跑；结果将进后端展示，suiteId 见 shared/suites.manifest.json）
-runners/    持续链路拨测（已对接 Admin「链路拨测」页）
-probes/     HTTP/API 探测
-shared/     登录、helpers、配置、套件清单
-load/       k6 压测
-results/    运行时结果（统一落盘，gitignore）
-artifacts/  历史交付报告（只读档案，不再写新结果）
-deploy/     Linux systemd 部署
-```
-
-## 和 Admin 的关系
-
-| 目录 | 现在前端有没有 | 说明 |
-|------|----------------|------|
-| `runners/core-link` | **有** `/monitoring/synthetic` | `monitor:core` 上报 |
-| `suites/*` | 还没有 | 规划接入后端展示，id 已固定 |
-| `probes/*` | 还没有 | 规划接入；≠ 前端「团队服务监控」整页 |
-
-## 套件 ID（后端用这个，不要随便改）
-
-见 `shared/suites.manifest.json`。
-
-常用命令：
-
-| npm | suite id |
-|-----|----------|
-| `npm run test:s10` | `smoke_s10` |
-| `npm run test:s30b` | `long_chat_s30b` |
-| `npm run test:core-regression` | `core_regression` |
-| `npm run test:sr30` | `session_recovery` |
-| `npm run test:case-catalog` | `case_catalog` |
-| `npm run test:markdown` | `markdown_render` |
-| `npm run capture:responses` | `capture_responses` |
-| `npm run probe:team-api` | `team_api` |
-| `npm run monitor:core` | `core_link`（已上报） |
-
-## 结果落盘与上报
+**一个固定产品的前端测试/监控模块**，只测：
 
 ```text
-results/runs/<suite_id>/latest.json   # 标准 Envelope
-results/spool/                        # 上报失败排队
+https://www.science42.tech
 ```
 
-配齐 `SYNTHETIC_MONITOR_REPORT_URL` + `RUNNER_ID` + `RUNNER_TOKEN` 后，
-`smoke_s10`（及后续接入的套件）会通过同一接口上报 Admin「链路拨测」。
-未配置时只写本地，不影响测试通过。
+不是多租户、不需要在 Admin 前端里给每个测试配目标地址。
 
-实现：`shared/report/index.mjs`
+固定配置见：`shared/config/project.mjs`
 
-## 首次本地
+## 目录
+
+```text
+shared/config/project.mjs   固定目标站 + 全项目上报配置读取
+shared/report/              所有套件共用的上报
+suites/                     质量测试（s10、长对话…）
+runners/core-link/          定时链路拨测
+probes/                     API 探测
+results/                    本地结果
+```
+
+## 你要填的配置（尽量少）
+
+`.env`：
 
 ```bash
-npm install && npm run pw:install
-cp .env.example .env   # 填账号；BASE_URL 指向环境
-npm run auth:setup     # 滑块验证一次，写 shared/auth/.auth/
-npm run test:s10
+# 登录 Science42（auth:setup / 自动登录需要）
+SCIENCE42_USER=...
+SCIENCE42_PASSWORD=...
+
+# 上报 Admin —— 整项目一套，配一次
+ADMIN_URL=https://你的-admin
+ADMIN_RUNNER_ID=...
+ADMIN_RUNNER_TOKEN=...
 ```
+
+- **不配 Admin 三项**：测试照跑，结果只在 `results/`
+- **配了**：所有套件共用这一套 Runner 上报（不必每个测试再配）
+
+## 常用命令
+
+```bash
+npm run auth:setup          # 首次登录存状态
+npm run test:s10            # 冒烟
+npm run monitor:core        # 链路拨测
+```
+
+## 套件 ID
+
+见 `shared/suites.manifest.json`（`smoke_s10`、`core_link`…）
