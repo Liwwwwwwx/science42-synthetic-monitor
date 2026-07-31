@@ -8,8 +8,8 @@
       "kind": "suite",
       "path": "suites/smoke-s10",
       "npm": "test:s10",
-      "reportsToBackend": "planned",
-      "summary": "10 道固定题，每题独立会话"
+      "reportsToBackend": "ready",
+      "summary": "10 道固定题，每题独立会话；配 Runner 凭证后自动上报"
     },
     {
       "id": "long_chat_s30b",

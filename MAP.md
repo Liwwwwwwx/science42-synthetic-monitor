@@ -41,15 +41,18 @@ deploy/     Linux systemd 部署
 | `npm run probe:team-api` | `team_api` |
 | `npm run monitor:core` | `core_link`（已上报） |
 
-## 结果落盘
+## 结果落盘与上报
 
 ```text
-results/
-  runs/<suite_id>/     # 各套件 JSON / 截图 / trace
-  spool/               # 上报失败本地排队
-  playwright-output/   # Playwright 失败附件
-  playwright-results.json
+results/runs/<suite_id>/latest.json   # 标准 Envelope
+results/spool/                        # 上报失败排队
 ```
+
+配齐 `SYNTHETIC_MONITOR_REPORT_URL` + `RUNNER_ID` + `RUNNER_TOKEN` 后，
+`smoke_s10`（及后续接入的套件）会通过同一接口上报 Admin「链路拨测」。
+未配置时只写本地，不影响测试通过。
+
+实现：`shared/report/index.mjs`
 
 ## 首次本地
 
