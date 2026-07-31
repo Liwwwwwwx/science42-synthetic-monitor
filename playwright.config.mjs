@@ -15,7 +15,7 @@ export default defineConfig({
   use: {
     baseURL: getTargetUrl(),
     headless: process.env.HEADLESS !== 'false',
-    trace: 'retain-on-failure',
+    trace: 'off',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
     storageState: process.env.SCIENCE42_STORAGE_STATE || getStorageStatePath(),

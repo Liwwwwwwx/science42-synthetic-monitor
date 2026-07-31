@@ -22,6 +22,7 @@ test('S-30B: 30 sequential questions in one conversation', async ({ page }, test
   await testInfo.attach('s30b-results.json', { body: JSON.stringify(results, null, 2), contentType: 'application/json' });
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: results.map((r) => ({

@@ -4,7 +4,7 @@ import { finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs'
 
 const SUITE_ID = 'session_recovery';
 
-test('SR-30 smoke: conversation persisted and discoverable', async ({ page }) => {
+test('SR-30 smoke: conversation persisted and discoverable', async ({ page }, testInfo) => {
   const startedAt = new Date();
   await loginIfNeeded(page);
   await newConversation(page);
@@ -17,6 +17,7 @@ test('SR-30 smoke: conversation persisted and discoverable', async ({ page }) =>
   const persisted = true;
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: [

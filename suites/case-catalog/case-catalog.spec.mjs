@@ -37,6 +37,7 @@ test('研发案例目录与点击入口清单', async ({ page }, testInfo) => {
   expect(inventory.cards).toBeGreaterThanOrEqual(0);
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: [

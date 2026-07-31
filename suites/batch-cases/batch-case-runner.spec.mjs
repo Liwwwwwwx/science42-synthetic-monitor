@@ -285,6 +285,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   // Prefix keys with category to keep unique across batch-all
   for (const c of checks) c.key = checkKey(`${CATEGORY}_${c.key}`, `${CATEGORY}_item`);
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt: suiteStartedAt,
     checks,

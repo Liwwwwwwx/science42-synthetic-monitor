@@ -42,6 +42,7 @@ test('CORE regression: login, send, stream, result, context, save and restore', 
   const restored = after.includes('ORANGE-42');
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: [

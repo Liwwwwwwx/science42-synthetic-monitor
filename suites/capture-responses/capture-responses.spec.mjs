@@ -54,6 +54,7 @@ test('capture S-10 response content in one conversation', async ({ page }, testI
   expect(records).toHaveLength(questions.length);
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: records.map((r) => ({

@@ -102,6 +102,7 @@ test('Markdown/LaTeX rendering: table, code, math, text-style', async ({ page },
   }
 
   await finishSuiteReport({
+    page, testInfo,
     suiteId: SUITE_ID,
     startedAt,
     checks: results.map((r) => ({

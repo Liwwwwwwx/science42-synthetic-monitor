@@ -92,10 +92,6 @@ async function postReport(envelope, evidence = {}) {
     const buf = await fs.readFile(evidence.screenshot);
     form.set('screenshot', new Blob([buf], { type: 'image/png' }), path.basename(evidence.screenshot));
   }
-  if (evidence.trace && envelope.status !== 'passed') {
-    const buf = await fs.readFile(evidence.trace);
-    form.set('trace', new Blob([buf], { type: 'application/zip' }), path.basename(evidence.trace));
-  }
 
   const response = await fetch(
     `${reportUrl}/api/synthetic-monitoring/runners/${encodeURIComponent(runnerId)}/runs`,
@@ -147,10 +143,11 @@ export async function flushSpool() {
 }
 
 export async function publishResult(envelope, evidence = {}) {
+  const safeEvidence = evidence && evidence.screenshot ? { screenshot: evidence.screenshot } : {};
   await flushSpool();
   const local = await writeLocalResult(envelope);
   try {
-    const report = await postReport(envelope, evidence);
+    const report = await postReport(envelope, safeEvidence);
     if (report.skipped) {
       console.log(`[report] ${envelope.suiteId} → 仅本地 (${report.reason})；全项目共用一套 ADMIN_* 凭证即可上报`);
     } else {
@@ -158,7 +155,7 @@ export async function publishResult(envelope, evidence = {}) {
     }
     return { local, report };
   } catch (error) {
-    await spool(envelope, evidence);
+    await spool(envelope, safeEvidence);
     console.warn(`[report] ${envelope.suiteId} 上报失败已入 spool: ${error.message}`);
     return { local, report: { skipped: false, spooled: true, error: error.message } };
   }
@@ -189,7 +186,18 @@ export async function finishSuiteReport(input) {
       input.errorSummary
       ?? (status === 'passed' ? null : checks.filter((c) => c.status !== 'passed').map((c) => c.key).join(',')),
   });
-  return publishResult(envelope, input.evidence || {});
+  let evidence = input.evidence && input.evidence.screenshot ? { screenshot: input.evidence.screenshot } : {};
+  if (status !== 'passed' && input.page && input.testInfo) {
+    try {
+      const screenshot = input.testInfo.outputPath('failure.png');
+      await fs.mkdir(path.dirname(screenshot), { recursive: true });
+      await input.page.screenshot({ path: screenshot, fullPage: true });
+      evidence = { screenshot };
+    } catch {
+      // The page may already be closed after a test failure; the report remains useful without evidence.
+    }
+  }
+  return publishResult(envelope, evidence);
 }
 
 /** Normalize a check key: lowercase snake, max 64. */
@@ -201,4 +209,3 @@ export function checkKey(raw, fallback = 'item') {
     .slice(0, 64);
   return s && /^[a-z]/.test(s) ? s : `c_${s || fallback}`.slice(0, 64);
 }
-
