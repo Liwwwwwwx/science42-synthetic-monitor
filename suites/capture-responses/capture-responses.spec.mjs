@@ -22,6 +22,17 @@ test('capture S-10 response content in one conversation', async ({ page }, testI
 
   const records = [];
   for (const question of questions) {
+    // 如果 input 被 disabled（发完上一条后），点分类标签重新激活
+    if (await input.isVisible().catch(() => false) && await input.isDisabled().catch(() => false)) {
+      for (const label of ['数据建模', '数学建模', '物理求解', '材料计算', 'AdvancedResearch']) {
+        const tag = page.locator('main').getByText(label, { exact: true }).first();
+        if (await tag.count() === 1 && await tag.isVisible().catch(() => false)) {
+          await tag.click().catch(() => {});
+          await page.waitForTimeout(1000);
+          break;
+        }
+      }
+    }
     await expect(input).toBeEnabled({ timeout: 10_000 });
     const started = Date.now();
     await input.fill(question);

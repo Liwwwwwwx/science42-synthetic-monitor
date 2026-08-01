@@ -31,7 +31,11 @@ export async function loginIfNeeded(page) {
 
 export async function newConversation(page) {
   await page.goto(cfg.chatPath);
-  await page.waitForTimeout(1000);
+  const newChat = page.getByRole('button', { name: '新建聊天', exact: true });
+  if (await newChat.isVisible().catch(() => false)) {
+    await newChat.click();
+    await page.waitForTimeout(500);
+  }
   // Science42 新版首页 input 默认 disabled，点分类标签激活对话
   const input = page.locator(cfg.selectors.input).last();
   if (await input.isVisible().catch(() => false) && await input.isDisabled().catch(() => false)) {
