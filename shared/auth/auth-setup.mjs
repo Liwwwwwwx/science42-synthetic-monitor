@@ -64,6 +64,14 @@ async function loggedInContentVisible() {
   return false;
 }
 
+async function conversationApiAuthenticated() {
+  const status = await page.evaluate(async () => {
+    const response = await fetch('/api/conversation/conversations?page=1&limit=1', { credentials: 'include' });
+    return response.status;
+  }).catch(() => 0);
+  return status === 200;
+}
+
 let username = null;
 let loginPassword = null;
 let loginOpened = false;
@@ -98,16 +106,16 @@ if (username) {
   throw new Error('Login form was not found. The page was not saved as authenticated.');
 }
 
-let authenticated = await loggedInContentVisible();
+let authenticated = (await loggedInContentVisible()) && (await conversationApiAuthenticated());
 for (let i = 0; !authenticated && i < 180; i += 1) {
   await page.waitForTimeout(1_000);
-  authenticated = await loggedInContentVisible();
+  authenticated = (await loggedInContentVisible()) && (await conversationApiAuthenticated());
 }
 
 if (!authenticated) {
   await page.screenshot({ path: 'artifacts/auth-setup-failure.png', fullPage: true }).catch(() => {});
   await browser.close();
-  throw new Error('Login was not confirmed by visible chat or case content.');
+  throw new Error('登录未被确认：聊天可见但 conversation API 未认证。请确认在当前目标站完成登录后再保存。');
 }
 
 await fs.mkdir(path.dirname(storageState), { recursive: true, mode: 0o700 });

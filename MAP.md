@@ -45,10 +45,9 @@ ADMIN_RUNNER_TOKEN=...
 
 ```bash
 npm run auth:setup          # 首次登录存状态
-npm run test:s10            # 冒烟
-npm run monitor:core        # 链路拨测
+npm run monitor:basic       # 基础功能快检（定时巡检）
 ```
 
 ## 套件 ID
 
-见 `shared/suites.manifest.json`（`smoke_s10`、`core_link`…）
+见 `shared/suites.manifest.json`（`basic_flow`、`case_catalog`…）

@@ -29,6 +29,9 @@ export function buildEnvelope(input) {
     durationMs: Math.round(Number(c.durationMs) || 0),
     errorCode: c.errorCode || null,
     message: c.message ? String(c.message).slice(0, 500) : null,
+    messageZh: c.messageZh ? String(c.messageZh).slice(0, 500) : null,
+    failureReason: c.failureReason ? String(c.failureReason).slice(0, 1000) : null,
+    failureReasonZh: c.failureReasonZh ? String(c.failureReasonZh).slice(0, 1000) : null,
   }));
   return {
     schemaVersion: 1,

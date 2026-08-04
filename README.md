@@ -17,21 +17,20 @@ npm run auth:setup
 ## 命令
 
 ```bash
-npm run test:s10
-npm run test:s30b
-npm run test:core-regression
+npm run monitor:basic        # 基础功能快检（登录态 + 1 题真实问答，后台按钮与定时任务使用）
+npm run test:basic           # 基础功能全量（登录态+10题冒烟+30轮长对话+刷新恢复，仅手动回归）
 npm run test:case-catalog
-npm run test:sr30
 npm run test:markdown
-npm run capture:responses
 
 # 研发案例批量（物理/数学/材料）
 CASE_LIMIT=1 npm run test:batch-cases
 CASE_LIMIT=0 npm run test:batch-all
+npm run run:cases -- --category=physics --indices=1,2,3,4,5
 
 npm run probe:team-api
-npm run monitor:core
 ```
+
+物理求解案例会额外校验 Step 1–6、Step 5/6 代码块、PNG 产物、案例关键字和“执行完成”；数学建模、材料计算只校验 Run 后新增回复和完成状态。
 
 ## 结果
 

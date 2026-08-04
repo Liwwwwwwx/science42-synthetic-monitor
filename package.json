@@ -5,18 +5,15 @@
   "scripts": {
     "pw:install": "playwright install chromium",
     "auth:setup": "node --env-file=.env shared/auth/auth-setup.mjs",
-    "test:s10": "playwright test suites/smoke-s10 --project=chromium",
-    "test:s30b": "playwright test suites/long-chat-s30b --project=chromium --workers=1",
-    "test:core-regression": "playwright test suites/core-regression --project=chromium --workers=1",
+    "test:basic": "playwright test suites/basic-flow --project=chromium --workers=1",
+    "monitor:basic": "BASIC_FLOW_MODE=quick playwright test suites/basic-flow --project=chromium --workers=1",
     "test:case-catalog": "playwright test suites/case-catalog --project=chromium --workers=1",
-    "test:sr30": "playwright test suites/session-recovery --project=chromium",
     "test:markdown": "playwright test suites/markdown-render --project=chromium --workers=1",
     "test:batch-cases": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
+    "test:case": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
+    "run:cases": "node scripts/run-cases.mjs",
     "test:batch-all": "node --env-file=.env suites/batch-cases/run-all-case-categories.mjs",
-    "capture:responses": "playwright test suites/capture-responses --project=chromium --workers=1",
-    "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs",
-    "monitor:core": "node --env-file=.env runners/core-link/core-flow-monitor.mjs",
-    "monitor:core:admin-local": "node --env-file=.env runners/core-link/run-admin-local.mjs"
+    "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

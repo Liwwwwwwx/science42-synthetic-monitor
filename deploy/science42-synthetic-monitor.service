@@ -11,7 +11,7 @@ WorkingDirectory=/opt/science42-synthetic-monitor
 EnvironmentFile=/etc/science42-synthetic-monitor/monitor.env
 Environment=HOME=/var/lib/science42-synthetic-monitor
 Environment=XDG_CACHE_HOME=/var/lib/science42-synthetic-monitor/cache
-ExecStart=/usr/bin/npm run monitor:core
+ExecStart=/usr/bin/npm run monitor:basic
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
