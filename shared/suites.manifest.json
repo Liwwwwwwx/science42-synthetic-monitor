@@ -31,12 +31,30 @@
     },
     {
       "id": "batch_cases",
-      "name": "研发案例批量",
+      "name": "物理案例批量",
       "kind": "suite",
       "path": "suites/batch-cases",
       "npm": "test:batch-cases",
       "reportsToBackend": "ready",
-      "summary": "按分类批量点 Run；物理求解额外验收步骤、代码和 PNG 产物"
+      "summary": "物理求解案例：按分类批量点 Run，验收 Step 1-6 流程、代码块、PNG 产物与执行完成"
+    },
+    {
+      "id": "data_cases",
+      "name": "数据建模案例批量",
+      "kind": "suite",
+      "path": "suites/batch-cases",
+      "npm": "test:batch-cases",
+      "reportsToBackend": "ready",
+      "summary": "数据建模案例（dataAnalytics）：CAD 组装与三维网格任务，验收 CAD 流程文案与 STL 文件产物"
+    },
+    {
+      "id": "material_cases",
+      "name": "材料计算案例批量",
+      "kind": "suite",
+      "path": "suites/batch-cases",
+      "npm": "test:batch-cases",
+      "reportsToBackend": "ready",
+      "summary": "材料计算案例（category=model + waterlily）：按双 Profile 验收（检索综合型：中文检索项+检索进度+综合回答；文本分析型：材料分析章节+追问推荐），处理追问与补充对话框"
     },
     {
       "id": "team_api",

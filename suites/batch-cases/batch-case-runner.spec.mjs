@@ -19,7 +19,9 @@ const CASE_CATALOG_INDEX = Number(process.env.CASE_CATALOG_INDEX || 0);
 const DRY_RUN = process.env.CASE_DRY_RUN === '1';
 const CHAT_PATH = '/#/chat';
 const SESSION_STATE_PATH = process.env.SCIENCE42_SESSION_STATE || 'shared/auth/.auth/science42-session.json';
-const SUITE_ID = 'batch_cases';
+// 上报套件 ID 按分类推导：材料/数据案例若打 batch_cases（物理）标签，
+// 会错误地出现在前端「物理案例」套件视图里（曾实测材料案例跑到物理分类下）。
+const SUITE_ID = CATEGORY === 'data' ? 'data_cases' : CATEGORY === 'material' ? 'material_cases' : 'batch_cases';
 
 const CATEGORY_LABEL = {
   physics: '物理求解',
@@ -29,7 +31,7 @@ const CATEGORY_LABEL = {
 }[CATEGORY] || '物理求解';
 const IS_PHYSICS_CASE = CATEGORY === 'physics';
 // 会话池：同账号并发时每个案例占用一个专用会话，避免在同一会话内互相串扰。
-// 槽位由 run-cases.mjs 按 --pool=N 计算（--pool 默认 5，即最大并发），经环境变量传入。
+// 槽位由 run-cases.mjs 按 --pool=N 计算（--pool 默认 3，即产品端实测并发容量），经环境变量传入。
 const CONVERSATION_SLOT = Number(process.env.CASE_CONVERSATION_SLOT || 0);
 const CONVERSATION_PREFIX = { physics: '物理案例', math: '数学案例', material: '材料案例', data: '数据案例' }[CATEGORY] || '物理案例';
 const IS_DATA_CASE = CATEGORY === 'data';
@@ -44,7 +46,9 @@ const IS_MATERIAL_CASE = CATEGORY === 'material';
 //  - Profile A（文本分析型，如 3D 打印材料/陶瓷基板，目录未命中或仅需求分析）：
 //    Round 1 + 材料分析章节（材料名称核对/已入库性质/本轮建议 或 需求表）+ 追问推荐，无检索字段。
 //  - 当前材料案例均为文本/检索输出，未见 MaterialsPNG/GLB/STL 结构化产物；产物检查按卡片实际能力记录。
-const MATERIAL_DIALOG_STOP_RE = /停\s*止/;
+// 材料「追问与补充」对话框的停止按钮：必须锚定「停 止」完整文本，
+// 子串匹配会误点「停止生成」等其它按钮，提前截断回答导致材料输出不完整。
+const MATERIAL_DIALOG_STOP_RE = /^停\s*止$/;
 const MATERIAL_ZH_SEARCH_RE = /中文检索项/;
 const MATERIAL_RETRIEVAL_PROGRESS_RE = /论文检索进度|检索概览|检索结果重排|文献检索/;
 const MATERIAL_COMPREHENSIVE_RE = /综合回答/;
@@ -415,7 +419,19 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       const conversationTitle = CONVERSATION_SLOT > 0
         ? `${CONVERSATION_PREFIX}-${CONVERSATION_SLOT}`
         : (IS_DATA_CASE ? '【自动化测试】数据建模' : IS_MATERIAL_CASE ? '【自动化测试】材料计算' : '【自动化测试】物理案例');
-      await ensureMonitoringConversation(page, conversationTitle);
+      const conversation = await ensureMonitoringConversation(page, conversationTitle);
+      // 并发池模式（槽位会话）：既未新建也未选中目标会话时，说明列表不可见且当前不在目标会话，
+      // 两个并发进程可能静默落到同一会话，池隔离失效。轮询等待列表渲染后重试，仍失败 → 整卡 BLOCKED。
+      if (CONVERSATION_SLOT > 0 && !conversation.created && !conversation.selected) {
+        const listDeadline = Date.now() + 15_000;
+        let confirmed = false;
+        while (Date.now() < listDeadline && !confirmed) {
+          await page.waitForTimeout(1_000);
+          const retry = await ensureMonitoringConversation(page, conversationTitle);
+          confirmed = retry.created || retry.selected;
+        }
+        if (!confirmed) throw new Error(`专用会话「${conversationTitle}」列表不可见且无法选中`);
+      }
     } catch (error) {
       navigationError = `${CATEGORY_LABEL}专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -427,31 +443,43 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   let selected = false;
   let panelExpanded = false;
   let cardsReady = false;
-  if (!navigationError) selected = await chooseCategory(page, prepareDeadline - Date.now());
-  if (selected) panelExpanded = await ensureCasePanelExpanded(page, Math.max(0, prepareDeadline - Date.now()));
-  if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
-  if (selected && !cardsReady && Date.now() < prepareDeadline) {
-    // 分类已选中后不能再次点击同一分类（会切换面板状态）；这里只继续等待展开与卡片加载。
-    console.log('[batch] 卡片未加载，继续等待面板展开与分类卡片…');
-    if (!panelExpanded) panelExpanded = await ensureCasePanelExpanded(page, prepareDeadline - Date.now());
-    if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
-  }
-  const cards = caseCards(page);
-  const cardCount = await cards.count();
-
-  // 单案例模式：CASE_TITLE 指定精确案例名，跳过全量标题收集（一个进程只跑一个案例，
-  // 可用 xargs -P 并行跑多个不同案例，互不影响）。未指定时走全量/限量收集。
+  let prepareError = '';
+  let cardCount = 0;
   const titles = [];
-  if (CASE_TITLE && selected && cardsReady) {
-    titles.push(CASE_TITLE);
-  } else {
-    for (let i = 0; i < cardCount; i += 1) {
-      const titleLocator = cards.nth(i).locator('span[class*="label"], h3').first();
-      const title = await titleLocator.getAttribute('title', { timeout: 2_000 }).catch(() => '')
-        || (await titleLocator.innerText({ timeout: 2_000 }).catch(() => '')).trim();
-      if (title && !titles.includes(title)) titles.push(title);
+  try {
+    if (!navigationError) selected = await chooseCategory(page, prepareDeadline - Date.now());
+    if (selected) panelExpanded = await ensureCasePanelExpanded(page, Math.max(0, prepareDeadline - Date.now()));
+    if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
+    if (selected && !cardsReady && Date.now() < prepareDeadline) {
+      // 分类已选中后不能再次点击同一分类（会切换面板状态）；这里只继续等待展开与卡片加载。
+      console.log('[batch] 卡片未加载，继续等待面板展开与分类卡片…');
+      if (!panelExpanded) panelExpanded = await ensureCasePanelExpanded(page, prepareDeadline - Date.now());
+      if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
     }
-    if (CASE_LIMIT > 0) titles.splice(CASE_LIMIT);
+    const cards = caseCards(page);
+    cardCount = await cards.count();
+
+    // 单案例模式：CASE_TITLE 指定精确案例名，跳过全量标题收集（一个进程只跑一个案例，
+    // 可用 xargs -P 并行跑多个不同案例，互不影响）。未指定时走全量/限量收集。
+    if (CASE_TITLE && selected && cardsReady) {
+      titles.push(CASE_TITLE);
+    } else {
+      for (let i = 0; i < cardCount; i += 1) {
+        const titleLocator = cards.nth(i).locator('span[class*="label"], h3').first();
+        const title = await titleLocator.getAttribute('title', { timeout: 2_000 }).catch(() => '')
+          || (await titleLocator.innerText({ timeout: 2_000 }).catch(() => '')).trim();
+        if (title && !titles.includes(title)) titles.push(title);
+      }
+      if (CASE_LIMIT > 0) titles.splice(CASE_LIMIT);
+    }
+  } catch (error) {
+    // 前置准备异常（页面崩溃/定位器报错等）不能直接抛出：否则 report 不会落盘，
+    // 运行记录「什么都不保留」。这里兜底为 BLOCKED，保证结果文件与上报仍然生成。
+    prepareError = error instanceof Error ? error.message : String(error);
+    console.log(`[batch] 前置准备异常（${prepareError}），按 BLOCKED 记录`);
+    selected = false;
+    panelExpanded = false;
+    cardsReady = false;
   }
   console.log(`[batch] selected=${selected} panelExpanded=${panelExpanded} cards=${cardCount} cases=${titles.length}${CASE_TITLE ? ` (single: ${CASE_TITLE})` : ''}`);
   // 单进程全量跑多个案例时，按案例数放大全局超时：
@@ -467,11 +495,13 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       category: CATEGORY,
       title: '',
       status: 'BLOCKED',
-      reason: navigationError
-        ? `聊天页加载失败：${navigationError}`
-        : selected && !panelExpanded
-          ? '分类已选择，但案例面板无法展开'
-          : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`,
+      reason: prepareError
+        ? `前置准备异常：${prepareError}`
+        : navigationError
+          ? `聊天页加载失败：${navigationError}`
+          : selected && !panelExpanded
+            ? '分类已选择，但案例面板无法展开'
+            : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`,
       ...(await collectOutput(page))
     });
   }
@@ -499,7 +529,22 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       if (index > 0) {
         await ensureCasePanelExpanded(page, 15_000);
       }
-      const card = await cardByTitle(page, title);
+      let card = await cardByTitle(page, title);
+      if (!card || !(await card.isVisible().catch(() => false))) {
+        // 面板可能不是“折叠”而是整个卸载（产品在 Run 后把视图重置回聊天列表，
+        // 连「搜索案例」标题都不存在）。ensureCasePanelExpanded 只能处理折叠。
+        // 刷新页面重新走“选择分类 → 展开面板 → 找卡片”完整流程，最多 2 轮，
+        // 仍失败才 BLOCKED。曾实测：批量第 3 个案例起全部“案例卡片在执行前不可见”。
+        console.log(`[case ${index + 1}] 卡片未找到，刷新页面并重新选择分类后重试…`);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => {});
+        await page.waitForTimeout(3_000);
+        for (let retry = 0; retry < 2 && !card; retry += 1) {
+          const reselected = await chooseCategory(page, 15_000);
+          const reexpanded = reselected && await ensureCasePanelExpanded(page, 15_000);
+          if (reexpanded) card = await cardByTitle(page, title, 15_000);
+          if (!card) await page.waitForTimeout(2_000);
+        }
+      }
       if (!card || !(await card.isVisible().catch(() => false))) {
         result.reason = CASE_TITLE ? `未找到指定案例：${CASE_TITLE}` : '案例卡片在执行前不可见';
       } else {
@@ -516,6 +561,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           // 并重找卡片（Run 后面板可能折叠导致按钮不可点）。
           let clicked = false;
           let clickError = null;
+          const t0 = Date.now(); // 首输出计时从首次点击尝试开始（含重试与重渲染等待）
           for (let attempt = 0; attempt < 2 && !clicked; attempt += 1) {
             if (attempt > 0) {
               await ensureCasePanelExpanded(page, 15_000);
@@ -540,7 +586,6 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             // “新增”（曾实测 4 秒假通过：首输出 237ms、材料信号全来自历史消息）。
             // 先等重渲染稳定（连续两次快照一致或最多 8s），再以稳定后的快照为基线。
             const assistantBefore = await waitForAssistantSettled(page, 8_000);
-            const t0 = Date.now();
             result.status = 'RUNNING';
 
           // ── 验收数据采集轮询 ────────────────────────────
@@ -578,6 +623,11 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           let genericComplete = false;
           // 材料计算：最近一次有输出消息的时间（用于“距上次输出超过 60s”的 stall 判据）
           let lastAssistantUpdateMs = null;
+          // 材料计算：「综合回答」标题首次出现时的文本长度。检索综合型的回答是流式输出，
+          // 标题先出现、正文随后才写；仅凭 stableRounds 会在标题刚出现、正文未输出时
+          // 就提前判定完成（曾实测：PCB 案例「综合回答 | 基于」即被截断 → NO_MATERIAL_CONCLUSION）。
+          // 完成判定要求综合回答之后至少有 200 字符正文，避免空标题假完成。
+          let comprehensiveAtLen = -1;
           // 材料完成信号：Profile B=综合回答；Profile A=分析章节+追问推荐
           const materialSignals = () => materialComprehensiveSeen || (materialZhuituiSeen && materialAnalysisSeen);
 
@@ -598,9 +648,15 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             }
             const current = await latestNewAssistant(page, assistantBefore);
             const pageText = (await page.locator('body').innerText().catch(() => '')).slice(-8_000);
-
-            // 服务不可用 → 立即失败
-            if (SERVICE_DOWN_RE.test(pageText)) { serviceDown = true; break; }
+            // 服务不可用 → 立即失败。只认“本次 Run 新增的 assistant 消息”，不扫整个 body：
+            // 会话历史里残留的失败文案（如上一案例的服务不可用）会连锁污染后续案例
+            //（曾实测：案例 A 服务不可用后，案例 B 仅 1.2s 就误判 SERVICE_DOWN）。
+            // 服务端不可用时回复本身就是一条新 assistant 消息，用 current.text 判定足够。
+            // 无新增消息时不再回退扫 body（历史残留会误报），交由下方 60s/180s 无输出逻辑判定。
+            if (current && current.text.trim() && SERVICE_DOWN_RE.test(current.text.slice(-4_000))) {
+              serviceDown = true;
+              break;
+            }
 
             // 首输出：优先认早期信号（生成中 / Step 1），其次认新 assistant 文案
             if (firstOutputMs === null) {
@@ -660,6 +716,11 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               if (MATERIAL_COMPREHENSIVE_RE.test(assistantText)) materialComprehensiveSeen = true;
               if (MATERIAL_ZHUITUI_RE.test(assistantText)) materialZhuituiSeen = true;
               if (MATERIAL_ANALYSIS_RE.test(assistantText)) materialAnalysisSeen = true;
+              // 「综合回答」标题首次出现时记录位置：检索综合型的正文是流式输出的，
+              // 标题先出现、正文随后才写，仅凭 stableRounds 会在正文未输出时提前收尾。
+              if (MATERIAL_COMPREHENSIVE_RE.test(assistantText) && comprehensiveAtLen === -1) {
+                comprehensiveAtLen = assistantText.length;
+              }
               // 只记录“当前文本自身含完成信号”的版本，历史消息（无信号）不会覆盖真实材料回答。
               const curComplete = MATERIAL_COMPREHENSIVE_RE.test(assistantText)
                 || (MATERIAL_ZHUITUI_RE.test(assistantText) && MATERIAL_ANALYSIS_RE.test(assistantText));
@@ -672,9 +733,13 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             // Profile B=综合回答出现；Profile A=分析章节+追问推荐出现。
             // 不能用通用 stableRounds 提前 break：检索流程中间会出现十几秒的停顿，
             // 停顿后还会继续流式输出（中文检索项/检索概览/综合回答）。
+            // 综合回答后必须再有 ≥200 字符正文才算完成，否则「综合回答」空标题即被截断
+            //（曾实测：PCB 案例 stableRounds=2 时正文只有「基于」两字 → NO_MATERIAL_CONCLUSION）。
+            const materialBodyWritten = comprehensiveAtLen === -1
+              || assistantText.length - comprehensiveAtLen >= 200;
             materialDone = IS_MATERIAL_CASE
               ? !STREAMING_RE.test(assistantText) && (stableRounds >= 2 || nullRounds >= 3)
-                && materialSignals()
+                && materialSignals() && materialBodyWritten
               : false;
             if (newFailure || (IS_PHYSICS_CASE ? newComplete : IS_DATA_CASE ? dataComplete : IS_MATERIAL_CASE ? materialDone : genericComplete)) break;
             await page.waitForTimeout(now - t0 < 30_000 ? 500 : 1_500);
@@ -707,8 +772,14 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               if (MATERIAL_COMPREHENSIVE_RE.test(assistantText)) materialComprehensiveSeen = true;
               if (MATERIAL_ZHUITUI_RE.test(assistantText)) materialZhuituiSeen = true;
               if (MATERIAL_ANALYSIS_RE.test(assistantText)) materialAnalysisSeen = true;
+              // 最终快照同样要求「综合回答」正文 ≥200 字符才视为完成（与轮询内判定一致）。
+              if (MATERIAL_COMPREHENSIVE_RE.test(assistantText) && comprehensiveAtLen === -1) {
+                comprehensiveAtLen = assistantText.length;
+              }
+              const finalBodyWritten = comprehensiveAtLen === -1
+                || assistantText.length - comprehensiveAtLen >= 200;
               materialDone = !STREAMING_RE.test(assistantText) && (stableRounds >= 2 || nullRounds >= 3)
-                && materialSignals();
+                && materialSignals() && finalBodyWritten;
             }
           }
           result.assistantText = assistantText.slice(-12_000);

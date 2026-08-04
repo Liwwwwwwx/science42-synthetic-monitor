@@ -93,44 +93,59 @@ export async function ensureMonitoringConversation(page, title) {
     return Array.isArray(items) ? items.map((item) => ({ id: String(item.id || ''), title: String(item.title || '') })) : [];
   });
   const select = async () => {
-    const existing = page.locator('[class*="chat-item"]').filter({ hasText: title }).first();
+    // 精确匹配标题：hasText 是子串匹配，「物理案例-1」会命中「物理案例-10/12」等。
+    const items = page.locator('[class*="chat-item"]');
+    for (let index = 0; index < await items.count(); index += 1) {
+      const item = items.nth(index);
+      const itemTitle = (await item.getAttribute('title').catch(() => '')) || (await item.innerText().catch(() => '')).trim();
+      if (itemTitle === title) {
+        await item.click();
+        await expect(page.locator(cfg.selectors.input).last()).toBeVisible({ timeout: 15_000 });
+        await activateChatInput(page);
+        return true;
+      }
+    }
     // 当前本地 XIMU 的 /#/chat 会重定向到首页工作台；该视图没有历史会话列表。
-    // 此时不能把“列表不可见”当成案例执行失败，继续使用已恢复的浏览器会话状态即可。
-    if (!(await existing.isVisible({ timeout: 3_000 }).catch(() => false))) return false;
-    await existing.click();
-    await expect(page.locator(cfg.selectors.input).last()).toBeVisible({ timeout: 15_000 });
-    await activateChatInput(page);
-    return true;
+    // 此时不能把「列表不可见」当成案例执行失败，继续使用已恢复的浏览器会话状态即可。
+    return false;
   };
 
-  if ((await conversations()).some((item) => item.title === title)) {
-    return { created: false, selected: await select() };
+  // 创建+改名存在并发竞态：并发进程几乎同时点「新建聊天」时可能拿到同一会话，
+  // 各自 rename 成自己的槽位标题（beforeIds 不含对方刚建的会话）。
+  // 因此改名后二次确认标题存在；被并发进程改名则重试一次完整流程。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if ((await conversations()).some((item) => item.title === title)) {
+      return { created: false, selected: await select() };
+    }
+    const beforeIds = new Set((await conversations()).map((item) => item.id));
+    await newConversation(page);
+    await activateChatInput(page);
+    await sendAndMeasure(page, `${title}。这是自动化测试专用会话，请保留该会话用于后续测试。`);
+    let createdId = '';
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !createdId) {
+      const latest = await conversations();
+      createdId = latest.find((item) => item.id && !beforeIds.has(item.id))?.id || '';
+      if (!createdId) await page.waitForTimeout(500);
+    }
+    if (!createdId) throw new Error('新建监控会话后未找到服务端 conversation id');
+    await page.evaluate(async ({ conversationId, conversationTitle }) => {
+      const response = await fetch('/api/conversation/update_title', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ external_id: conversationId, title: conversationTitle }),
+      });
+      if (!response.ok) throw new Error(`conversation title HTTP ${response.status}`);
+    }, { conversationId: createdId, conversationTitle: title });
+    if ((await conversations()).some((item) => item.title === title)) {
+      return { created: true, selected: await select() };
+    }
+    // 标题未确认（可能被并发进程改名）：重试一次完整创建流程。
   }
-
-  const beforeIds = new Set((await conversations()).map((item) => item.id));
-  await newConversation(page);
-  await activateChatInput(page);
-  await sendAndMeasure(page, `${title}。这是自动化测试专用会话，请保留该会话用于后续测试。`);
-  let createdId = '';
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline && !createdId) {
-    const latest = await conversations();
-    createdId = latest.find((item) => item.id && !beforeIds.has(item.id))?.id || '';
-    if (!createdId) await page.waitForTimeout(500);
-  }
-  if (!createdId) throw new Error('新建监控会话后未找到服务端 conversation id');
-  await page.evaluate(async ({ conversationId, conversationTitle }) => {
-    const response = await fetch('/api/conversation/update_title', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-      body: JSON.stringify({ external_id: conversationId, title: conversationTitle }),
-    });
-    if (!response.ok) throw new Error(`conversation title HTTP ${response.status}`);
-  }, { conversationId: createdId, conversationTitle: title });
-  return { created: true, selected: await select() };
+  throw new Error(`监控会话「${title}」创建后标题确认失败（可能被并发进程改名）`);
 }
 
 async function assistantSnapshot(page) {

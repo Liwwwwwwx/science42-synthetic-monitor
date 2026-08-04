@@ -10,13 +10,17 @@ export default defineConfig({
   outputDir: 'results/playwright-output',
   reporter: [
     ['list'],
-    ['json', { outputFile: 'results/playwright-results.json' }],
+    // 并发子进程（test:quick / run:cases --parallel>1）必须各自写独立文件，
+    // 父脚本通过 PLAYWRIGHT_JSON_REPORT 注入唯一路径，避免互相覆盖损坏。
+    ['json', { outputFile: process.env.PLAYWRIGHT_JSON_REPORT || 'results/playwright-results.json' }],
   ],
   use: {
     baseURL: getTargetUrl(),
     headless: process.env.HEADLESS !== 'false',
     trace: 'off',
-    video: 'retain-on-failure',
+    // 录屏改为默认关闭：ffmpeg 录制会持续吃 CPU/磁盘，批量跑多个案例时叠加多个实例会把机器拖垮。
+    // 需要排查时临时改回 'retain-on-failure' 或设 VIDEO=on。
+    video: process.env.VIDEO === 'on' ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
     storageState: process.env.SCIENCE42_STORAGE_STATE || getStorageStatePath(),
   },

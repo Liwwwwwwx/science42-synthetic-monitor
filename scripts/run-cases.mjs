@@ -3,7 +3,7 @@
 //   node scripts/run-cases.mjs --category=physics --indices=2,5,10  # 多选卡片，按位置串行
 //   node scripts/run-cases.mjs --dry               # 只盘点打印将跑的案例，不实际执行
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,7 +56,16 @@ const baseEnv = { ...process.env, CASE_CATEGORY: CATEGORY };
 console.log(`[1/3] 盘点「${CATEGORY_LABEL[CATEGORY]}」分类案例…`);
 const dry = spawnSync(
   'npx', ['playwright', 'test', 'suites/batch-cases', '--project=chromium'],
-  { cwd: ROOT, env: { ...baseEnv, CASE_DRY_RUN: '1', CASE_LIMIT: '0' }, encoding: 'utf8', timeout: 180_000 },
+  {
+    cwd: ROOT,
+    env: {
+      ...baseEnv,
+      CASE_DRY_RUN: '1',
+      CASE_LIMIT: '0',
+      PLAYWRIGHT_JSON_REPORT: path.join('results', `playwright-results-${CATEGORY}-dry.json`),
+    },
+    encoding: 'utf8', timeout: 180_000,
+  },
 );
 if (dry.status !== 0) {
   const output = `${dry.stdout || ''}\n${dry.stderr || ''}`.trim();
@@ -83,9 +92,13 @@ if (DRY || selections.length === 0) {
 // ── 2. 并行执行：每案例一个独立进程 ───────────────────────────
 console.log(`[2/3] 串行跑 ${selections.length} 个案例（并发 ${Math.min(PARALLEL, selections.length)}）…`);
 const results = [];
+const children = new Set();
 let cursor = 0;
 let running = 0;
 let nextId = 0;
+// 收到外部终止信号时统一杀掉全部子进程，避免留下僵尸 playwright。
+process.on('SIGINT', () => { for (const c of children) c.kill('SIGKILL'); process.exit(130); });
+process.on('SIGTERM', () => { for (const c of children) c.kill('SIGKILL'); process.exit(143); });
 
 function startOne() {
   if (cursor >= selections.length) return;
@@ -100,23 +113,47 @@ function startOne() {
     'npx', ['playwright', 'test', 'suites/batch-cases', '--project=chromium', '--workers=1'],
     {
       cwd: ROOT,
-      env: { ...baseEnv, CASE_TITLE: title, CASE_CATALOG_INDEX: String(position), CASE_RUN_TIMEOUT_MS: String(RUN_TIMEOUT_MS), CASE_CONVERSATION_SLOT: String(slot) },
+      env: {
+        ...baseEnv,
+        CASE_TITLE: title,
+        CASE_CATALOG_INDEX: String(position),
+        CASE_RUN_TIMEOUT_MS: String(RUN_TIMEOUT_MS),
+        CASE_CONVERSATION_SLOT: String(slot),
+        // 每个子进程独立 json 报告文件，避免并发写同一文件互相覆盖（playwright.config.mjs 读取）。
+        PLAYWRIGHT_JSON_REPORT: path.join('results', `playwright-results-${CATEGORY}-${position}-${id}.json`),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
+  children.add(child);
   let output = '';
-  child.stdout.on('data', (d) => { output += d; });
-  child.stderr.on('data', (d) => { output += d; });
-  child.on('close', (code) => {
+  let settled = false;
+  child.stdout.on('data', (d) => { output += d; if (output.length > 65536) output = output.slice(-65536); });
+  child.stderr.on('data', (d) => { output += d; if (output.length > 65536) output = output.slice(-65536); });
+  const settle = (code, detail) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(watchdog);
+    children.delete(child);
     running--;
     const status = code === 0 ? 'PASSED' : 'FAILED';
     const line = output.split('\n').find((l) => l.includes(`[case 1/1]`)) || '';
     const m = /- (PASSED|FAILED|TIMEOUT|BLOCKED|DISCOVERED) \((\d+) ms\)/.exec(line);
-    const reason = /\sreason=(.+)$/.exec(line)?.[1]?.trim() || '';
-    results.push({ position, title, status, code, durationMs: m ? Number(m[2]) : null, detail: reason || (m ? m[1] : '') });
+    const reason = detail || (/\sreason=(.+)$/.exec(line)?.[1]?.trim() || '');
+    results.push({ position, title, status, code, durationMs: m ? Number(m[2]) : null, detail: reason || (m ? m[1] : status) });
     console.log(`[run ${id + 1}] #${position} ${title} → ${reason || (m ? m[1] : status)}${m ? ` (${(m[2] / 1000).toFixed(0)}s)` : ''}`);
     startOne();
-  });
+  };
+  child.on('close', (code) => settle(code === null ? -1 : code));
+  child.on('error', (err) => settle(-1, `子进程启动失败：${err.message}`));
+  // 看门狗：子进程卡死（浏览器僵尸/npx 挂起）时强制终止并记为失败，避免脚本永不退出。
+  const watchdog = setTimeout(() => {
+    if (settled) return;
+    console.log(`[run ${id + 1}] #${position} ${title} 超过 ${((RUN_TIMEOUT_MS + 300_000) / 1000).toFixed(0)}s 未结束，强制终止`);
+    child.kill('SIGKILL');
+    settle(-1, '看门狗强制终止');
+  }, RUN_TIMEOUT_MS + 300_000);
+  watchdog.unref();
 }
 
 const concurrency = Math.min(PARALLEL, selections.length);
@@ -127,10 +164,31 @@ await new Promise((resolve) => {
 });
 
 // ── 3. 汇总 ──────────────────────────────────────────────────
+const ordered = [...results].sort((a, b) => a.position - b.position);
 console.log(`\n[3/3] 汇总（${results.length} 个案例）：`);
-for (const r of results) {
+for (const r of ordered) {
   console.log(`  ${r.status === 'PASSED' ? '✅' : '❌'} #${r.position} ${r.title} → ${r.detail || (r.code === 0 ? 'PASSED' : `exit ${r.code}`)}${r.durationMs ? ` (${(r.durationMs / 1000).toFixed(0)}s)` : ''}`);
 }
 const failed = results.filter((r) => r.status !== 'PASSED');
 console.log(`\n通过 ${results.length - failed.length}/${results.length}`);
+
+// 父级汇总落盘：子进程被看门狗 SIGKILL 时 spec 的写盘不会执行，
+// 此文件保证被强制终止的案例也有本地记录可查（与后端 synthetic_tasks 入库互补）。
+try {
+  const summaryDir = path.join(ROOT, 'results', 'runs', 'batch_cases', CATEGORY);
+  mkdirSync(summaryDir, { recursive: true });
+  const summaryFile = path.join(summaryDir, `run-cases-summary-${new Date().toISOString().replaceAll(':', '-')}.json`);
+  writeFileSync(summaryFile, JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    category: CATEGORY,
+    parallel: PARALLEL,
+    pool: POOL,
+    passed: results.length - failed.length,
+    total: results.length,
+    results: ordered,
+  }, null, 2), 'utf8');
+} catch (error) {
+  console.error(`[run-cases] 汇总落盘失败: ${error.message}`);
+}
+
 process.exit(failed.length > 0 ? 1 : 0);
