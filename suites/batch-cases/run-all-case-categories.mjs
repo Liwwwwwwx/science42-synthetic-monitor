@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const categories = ['physics', 'math', 'material'];
+const categories = ['physics', 'math', 'material', 'data'];
 const limit = process.env.CASE_LIMIT || '0';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const results = [];
