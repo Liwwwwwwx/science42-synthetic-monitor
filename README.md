@@ -7,6 +7,7 @@
 ## 安装
 
 ```bash
+# 生产环境固定部署到 /data/science-admin/science42-synthetic-monitor
 npm install && npm run pw:install
 cp .env.example .env
 # 填 SCIENCE42_USER / SCIENCE42_PASSWORD

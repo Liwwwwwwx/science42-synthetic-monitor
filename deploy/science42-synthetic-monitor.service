@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=synthetic-monitor
 Group=synthetic-monitor
-WorkingDirectory=/opt/science42-synthetic-monitor
+WorkingDirectory=/data/science-admin/science42-synthetic-monitor
 EnvironmentFile=/etc/science42-synthetic-monitor/monitor.env
 Environment=HOME=/var/lib/science42-synthetic-monitor
 Environment=XDG_CACHE_HOME=/var/lib/science42-synthetic-monitor/cache
@@ -16,4 +16,4 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/science42-synthetic-monitor /opt/science42-synthetic-monitor/results
+ReadWritePaths=/var/lib/science42-synthetic-monitor /data/science-admin/science42-synthetic-monitor/results
