@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CATEGORY_LABEL = { physics: '物理求解', math: '数学建模', material: '材料计算' };
+const CATEGORY_LABEL = { physics: '物理求解', math: '数学建模', material: '材料计算', data: '数据建模' };
 
 const args = process.argv.slice(2);
 const opt = (name, def) => {
@@ -20,7 +20,10 @@ const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
 // 默认串行：实测服务端任务队列是串行执行的，并发 ≥2 时后提交的任务排队撞超时
 //（单跑 52-125s 全过；并发 2/5 全部 TIMEOUT）。并发只在服务端支持并行时再开启。
 const PARALLEL = Number(opt('parallel', 1));
-const RUN_TIMEOUT_MS = Number(opt('timeout', 300_000));
+// 默认超时按分类区分：数据建模（CAD 装配/三维网格）任务实测正常完成需 5-10 分钟，
+// 300s 通用预算会截断仍在执行的正常任务；physics/math/material 保持 300s。
+const DEFAULT_TIMEOUT_MS = CATEGORY === 'data' ? 660_000 : 300_000;
+const RUN_TIMEOUT_MS = Number(opt('timeout', DEFAULT_TIMEOUT_MS));
 const DRY = args.includes('--dry');
 
 if (args.includes('--help') || args.includes('-h')) {

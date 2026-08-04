@@ -7,7 +7,9 @@ import { ensureMonitoringConversation } from '../../shared/lib/helpers.mjs';
 // 批量点击 SCIENCE42_BASE_URL 指向目标的聊天页案例卡 Run，并保存每个案例的页面输出。
 // 账号登录和滑块验证必须由人工完成；脚本不读取或绕过验证码数据。
 const CATEGORY = (process.env.CASE_CATEGORY || 'physics').toLowerCase();
-const RUN_TIMEOUT = Number(process.env.CASE_RUN_TIMEOUT_MS || 300_000);
+// 数据建模（CAD 装配/三维网格）任务实测正常完成需 5-10 分钟；通用 300s 会截断正常执行。
+const DEFAULT_RUN_TIMEOUT_MS = CATEGORY === 'data' ? 660_000 : 300_000;
+const RUN_TIMEOUT = Number(process.env.CASE_RUN_TIMEOUT_MS || DEFAULT_RUN_TIMEOUT_MS);
 // 页面、分类与案例卡加载属于前置条件；不能占用物理任务的 5 分钟求解预算。
 const PREPARE_TIMEOUT_MS = Number(process.env.CASE_PREPARE_TIMEOUT_MS || 90_000);
 const NAVIGATION_TIMEOUT_MS = Number(process.env.CASE_NAVIGATION_TIMEOUT_MS || 30_000);
@@ -22,9 +24,22 @@ const SUITE_ID = 'batch_cases';
 const CATEGORY_LABEL = {
   physics: '物理求解',
   math: '数学建模',
-  material: '材料计算'
+  material: '材料计算',
+  data: '数据建模'
 }[CATEGORY] || '物理求解';
 const IS_PHYSICS_CASE = CATEGORY === 'physics';
+const IS_DATA_CASE = CATEGORY === 'data';
+
+// 数据建模（dataAnalytics）专属验收：CAD 组装与建模任务必须出现的流程文案。
+// 以真实 Run 输出定标：规划 → 底层代码 → 几何实体，缺任何一段都视为流程不完整。
+const DATA_REQUIRED_PHRASES = [
+  'CAD 组装与建模任务',
+  '正在构思装配结构规划',
+  '规划已交付，开始编写底层代码',
+  '正在生成几何实体，请稍候',
+];
+// stl 文件产物信号：文本引用文件名/链接、STL_VIEWER 内嵌标记或 3D 查看器徽标
+const STL_RE = /\.stl(?:[?#]|$)|<<<STL_VIEWER:|STL 模型|>STL<|STL_VIEWER/i;
 
 // 失败信号只认明确的失败文案（配合新增计数对比，历史转录残留不会误触发）。
 // 不能含 error/504/50x 等：案例描述与历史对话里的 Max Error、HTTP 504、参数 2500 等会误匹配。
@@ -35,10 +50,13 @@ const EXECUTION_COMPLETE_RE = /项目[\s\S]{0,160}执行完成/i;
 const STREAMING_RE = /生成中|正在生成|Generating/i;
 
 // ── 通用验收标准 ─────────────────────────────────────────────
-// 1 分钟无任务输出 = 服务响应超时
-const RESPONSE_TIMEOUT_MS = Number(process.env.CASE_RESPONSE_TIMEOUT_MS || 60_000);
-// 提问后首输出延迟上限（本地 PINN 实测常 25-35s，默认 45s；可用 CASE_FIRST_REPLY_LIMIT_MS 覆盖）
-const FIRST_REPLY_LIMIT_MS = Number(process.env.CASE_FIRST_REPLY_LIMIT_MS || 45_000);
+// 1 分钟无任务输出 = 服务响应超时（数据建模新会话首次任务首输出可能 1-3 分钟，放宽到 3 分钟）
+const RESPONSE_TIMEOUT_MS = Number(process.env.CASE_RESPONSE_TIMEOUT_MS
+  || (CATEGORY === 'data' ? 180_000 : 60_000));
+// 提问后首输出延迟上限（本地 PINN 实测常 25-35s，默认 45s；可用 CASE_FIRST_REPLY_LIMIT_MS 覆盖。
+// 数据建模新会话首次任务首输出可能 1-3 分钟，放宽到 180s）
+const FIRST_REPLY_LIMIT_MS = Number(process.env.CASE_FIRST_REPLY_LIMIT_MS
+  || (CATEGORY === 'data' ? 180_000 : 45_000));
 // 团队服务不可用 = 服务挂了
 const SERVICE_DOWN_RE = /团队服务不可用|服务暂时不可用|服务不可用|服务异常/i;
 // Step 标题（任务流程章节）
@@ -304,9 +322,11 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   const prepareDeadline = Date.now() + PREPARE_TIMEOUT_MS;
   if (!navigationError) {
     try {
-      await ensureMonitoringConversation(page, '【自动化测试】物理案例');
+      // 会话按分类隔离：数据建模任务（CAD 装配/网格）与物理案例混用同一会话时，
+      // 失败历史（如代码迭代多次失败）会残留并让服务端直接拒绝下一轮 Run。
+      await ensureMonitoringConversation(page, IS_DATA_CASE ? '【自动化测试】数据建模' : '【自动化测试】物理案例');
     } catch (error) {
-      navigationError = `物理案例专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
+      navigationError = `${CATEGORY_LABEL}专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
     }
   }
   if (!navigationError) await page.waitForTimeout(Math.min(5_000, PREPARE_TIMEOUT_MS));
@@ -395,6 +415,9 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           let stallDetected = false;  // 60s 无输出
           const stepsSeen = new Set();
           let pngSeen = false;
+          const dataPhrasesSeen = new Set();
+          let stlSeen = false;
+          let dataComplete = false;
           let newFailure = false;
           let newComplete = false;
           let assistant = null;
@@ -436,11 +459,22 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             newFailure = FAILURE_RE.test(assistantText);
             newComplete = EXECUTION_COMPLETE_RE.test(assistantText);
             genericComplete = newComplete || (!STREAMING_RE.test(assistantText) && stableRounds >= 2);
-            if (newFailure || (IS_PHYSICS_CASE ? newComplete : genericComplete)) break;
+            // 数据建模：流程文案 4 段齐全且 stl 产物出现才算完成；不能像通用分类那样
+            // 因回复停顿（stableRounds）提前 break——几何实体与 stl 文件是流程后半段的产物。
+            dataComplete = IS_DATA_CASE
+              ? DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen
+              : false;
+            if (newFailure || (IS_PHYSICS_CASE ? newComplete : (IS_DATA_CASE ? dataComplete : genericComplete))) break;
 
             if (IS_PHYSICS_CASE) {
               for (const m of assistantText.matchAll(STEP_RE)) stepsSeen.add(Number(m[1]));
               if (PNG_RE.test(assistantText)) pngSeen = true;
+            }
+            if (IS_DATA_CASE) {
+              for (const phrase of DATA_REQUIRED_PHRASES) {
+                if (assistantText.includes(phrase)) dataPhrasesSeen.add(phrase);
+              }
+              if (STL_RE.test(assistantText)) stlSeen = true;
             }
             await page.waitForTimeout(now - t0 < 30_000 ? 500 : 1_500);
           }
@@ -457,12 +491,24 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             newFailure = FAILURE_RE.test(assistantText);
             newComplete = EXECUTION_COMPLETE_RE.test(assistantText);
             genericComplete = newComplete || (!STREAMING_RE.test(assistantText) && stableRounds >= 2);
+            if (IS_DATA_CASE) {
+              for (const phrase of DATA_REQUIRED_PHRASES) {
+                if (assistantText.includes(phrase)) dataPhrasesSeen.add(phrase);
+              }
+              if (STL_RE.test(assistantText)) stlSeen = true;
+              dataComplete = DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen;
+            }
           }
           result.assistantText = assistantText.slice(-12_000);
 
           // 深度物理验收只看本次新增 assistant 消息，绝不把案例卡自身图片算作任务产物。
           if (IS_PHYSICS_CASE && assistant && !pngSeen) {
             pngSeen = await assistant.content.locator('img[src*=".png"], img[src*="data:image/png"]')
+              .count().then((n) => n > 0).catch(() => false);
+          }
+          // 数据建模：stl 产物可能以 STL 查看器组件（canvas/徽标）或 .stl 链接呈现，DOM 兜底检测
+          if (IS_DATA_CASE && assistant && !stlSeen) {
+            stlSeen = await assistant.content.locator('a[href*=".stl"], img[src*=".stl"], [class*="stl" i], [aria-label*="STL"], [title*=".stl"]')
               .count().then((n) => n > 0).catch(() => false);
           }
           const codeBlocks = IS_PHYSICS_CASE && assistant ? await codeBlockSteps(assistant.content) : { s5: false, s6: false };
@@ -541,15 +587,40 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             }
           }
 
-          // 物理求解必须出现任务完成标志；其他分类只要求新增回复已结束且不再生成中。
+          // 数据建模（dataAnalytics）专属验收：CAD 组装流程文案完整 + stl 文件产物。
+          // 不继承物理的 Step 1-6 / PNG 要求；流程文案按真实 Run 定标。
+          if (IS_DATA_CASE) {
+            if (serviceDown) {
+              skip('cad_flow', '服务不可用，未进入执行');
+            } else {
+              const missing = DATA_REQUIRED_PHRASES.filter((phrase) => !dataPhrasesSeen.has(phrase));
+              if (missing.length === 0) {
+                pass('cad_flow', 'CAD 组装与建模流程文案完整出现');
+              } else {
+                fail('cad_flow', 'MISSING_CAD_PHRASE', `缺少流程文案：${missing.join('；')}`);
+              }
+            }
+
+            if (serviceDown) {
+              skip('stl_file', '服务不可用，未进入执行');
+            } else if (stlSeen) {
+              pass('stl_file', '本次回复包含 stl 文件产物');
+            } else {
+              fail('stl_file', 'NO_STL_FILE', '本次回复中未检测到 stl 文件（.stl 链接/查看器）');
+            }
+          }
+
+          // 物理求解必须出现任务完成标志；数据建模按专属流程（文案齐全 + stl）；其他分类只要求新增回复已结束。
           if (serviceDown) {
             skip('complete', '服务不可用，未进入执行');
           } else if (IS_PHYSICS_CASE && newComplete) {
             pass('complete', '检测到物理任务「执行完成」');
-          } else if (!IS_PHYSICS_CASE && genericComplete) {
+          } else if (IS_DATA_CASE && dataComplete) {
+            pass('complete', '数据建模流程完整：流程文案齐全且 stl 文件已生成');
+          } else if (!IS_PHYSICS_CASE && !IS_DATA_CASE && genericComplete) {
             pass('complete', '新增 assistant 回复已完成');
           } else {
-            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : '新增回复仍在生成或未完成'));
+            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : (IS_DATA_CASE ? '数据建模流程未走完（文案或 stl 产物缺失）' : '新增回复仍在生成或未完成')));
           }
 
           result.checks = itemChecks;
@@ -557,6 +628,8 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           result.stepsSeen = [...stepsSeen].sort().join(',');
           result.pngSeen = pngSeen;
           result.codeBlocks = { s5: codeBlocks.s5, s6: codeBlocks.s6 };
+          result.dataPhrases = IS_DATA_CASE ? [...dataPhrasesSeen] : null;
+          result.stlSeen = IS_DATA_CASE ? stlSeen : null;
           result.keywordHit = IS_PHYSICS_CASE && !serviceDown
             ? matchCaseKeywords(title, assistantText).matched
             : null;
@@ -612,6 +685,8 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               png: 'PNG 图',
               keyword: '内容匹配',
               complete: '执行完成',
+              cad_flow: '建模流程文案',
+              stl_file: 'STL 文件',
             }[c.key] || c.key;
             const detail = String(c.message || '').slice(0, 200);
             const failed = c.status !== 'passed';
