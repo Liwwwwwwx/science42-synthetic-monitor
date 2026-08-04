@@ -17,12 +17,12 @@ const opt = (name, def) => {
 };
 const CATEGORY = opt('category', 'physics').toLowerCase();
 const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
-// 并发通过会话池隔离：每案例占用一个专用会话（--pool=N 槽位，默认 5 = 最大并发），
-// 实测同账号不同会话的任务可并行（2 任务同时通过）；同一会话并发会互相串扰
-//（消息流/面板状态竞争，排队案例撞完成检测窗口）。串行时按池轮训复用会话。
-const PARALLEL = Math.min(Math.max(Number(opt('parallel', 1)) || 1, 1), 5);
-// 会话池大小：并发时案例按顺序取槽位独占会话；串行时轮训。上限即最大并发 5。
-const POOL = Math.min(Math.max(Number(opt('pool', 5)) || 1, 1), 5);
+// 并发通过会话池隔离：每案例占用一个专用会话（--pool=N 槽位，默认 3），
+// 实测同账号不同会话的任务可并行（3 任务同时通过）；同一会话并发会互相串扰
+//（消息流/面板状态竞争）。产品端单账号并发容量实测上限 3，>3 会过载失败（SERVICE_DOWN/排队超时）。
+const PARALLEL = Math.min(Math.max(Number(opt('parallel', 1)) || 1, 1), 3);
+// 会话池大小：并发时案例按顺序取槽位独占会话；串行时轮训。上限即产品端实测并发容量 3。
+const POOL = Math.min(Math.max(Number(opt('pool', 3)) || 1, 1), 3);
 // 池必须不小于并发数：并发=池上限时全部案例同时启动，槽位不足会重复（会话冲突）。
 const effectivePool = Math.max(POOL, PARALLEL);
 // 默认超时按分类区分：数据建模（CAD 装配/三维网格）任务实测正常完成需 5-10 分钟，
