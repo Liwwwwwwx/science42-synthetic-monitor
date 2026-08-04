@@ -54,7 +54,8 @@ const dry = spawnSync(
   { cwd: ROOT, env: { ...baseEnv, CASE_DRY_RUN: '1', CASE_LIMIT: '0' }, encoding: 'utf8', timeout: 180_000 },
 );
 if (dry.status !== 0) {
-  console.error(`盘点失败（exit ${dry.status}）：\n${dry.stdout?.slice(-2000)}`);
+  const output = `${dry.stdout || ''}\n${dry.stderr || ''}`.trim();
+  console.error(`盘点失败（exit ${dry.status}）：\n${output.slice(-6000)}`);
   process.exit(1);
 }
 const outDir = path.join(ROOT, 'results/runs/batch_cases', CATEGORY);

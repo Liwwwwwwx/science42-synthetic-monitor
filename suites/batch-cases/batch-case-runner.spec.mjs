@@ -197,16 +197,18 @@ async function chooseCategory(page, timeoutMs) {
     for (let i = 0; i < count; i += 1) {
       const action = actions.nth(i);
       if ((await action.innerText().catch(() => '')).trim() === CATEGORY_LABEL && await action.isVisible().catch(() => false)) {
+        if (/selected/i.test(await action.getAttribute('class').catch(() => '') || '')) return true;
         try {
           await action.click({ timeout: 3_000 });
         } catch {
-          return false;
+          continue;
         }
         await page.waitForTimeout(2_000);
         return true;
       }
     }
-    const fallbackActions = page.locator('main').getByText(CATEGORY_LABEL, { exact: true });
+    // 当前线上聊天页没有稳定的 <main> 容器；从全页候选中倒序选择，优先命中底部输入栏动作。
+    const fallbackActions = page.getByText(CATEGORY_LABEL, { exact: true });
     for (let i = await fallbackActions.count() - 1; i >= 0; i -= 1) {
       const action = fallbackActions.nth(i);
       if (await action.isVisible().catch(() => false)) {
@@ -215,7 +217,7 @@ async function chooseCategory(page, timeoutMs) {
           await page.waitForTimeout(2_000);
           return true;
         } catch {
-          return false;
+          continue;
         }
       }
     }
@@ -230,6 +232,40 @@ function caseCards(page) {
   return page
     .locator('div[class*="ActionCardPanel"] > span[class*="label"]')
     .locator('xpath=ancestor::div[contains(@class,"ActionCardPanel")][1]');
+}
+
+/**
+ * 新版 Science42 会记住案例面板的折叠状态。分类按钮即使可见、可点击，
+ * 折叠状态下也不会挂载 cardList，因此必须先展开面板再等待案例卡片。
+ */
+async function ensureCasePanelExpanded(page, timeoutMs = 10_000) {
+  const timeout = Math.max(1, timeoutMs);
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const labels = page.getByText('搜索案例', { exact: true });
+    for (let index = await labels.count() - 1; index >= 0; index -= 1) {
+      const searchLabel = labels.nth(index);
+      if (!(await searchLabel.isVisible().catch(() => false))) continue;
+
+      const panel = searchLabel.locator(
+        'xpath=ancestor::div[contains(@class,"ActionCardPanel") and contains(@class,"panel")][1]'
+      );
+      const cardList = panel.locator('div[class*="cardList"]').first();
+      if (await cardList.isVisible().catch(() => false)) return true;
+
+      const toggle = panel.locator('div[class*="collapseIcon"]').first();
+      if (!(await toggle.isVisible().catch(() => false))) continue;
+      const remaining = Math.max(1, deadline - Date.now());
+      try {
+        await toggle.click({ timeout: Math.min(remaining, 5_000) });
+      } catch {
+        continue;
+      }
+      return cardList.isVisible({ timeout: remaining }).catch(() => false);
+    }
+    await page.waitForTimeout(500);
+  }
+  return false;
 }
 
 async function cardByTitle(page, title, timeoutMs = 20_000) {
@@ -319,7 +355,6 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   } catch (error) {
     navigationError = error instanceof Error ? error.message : String(error);
   }
-  const prepareDeadline = Date.now() + PREPARE_TIMEOUT_MS;
   if (!navigationError) {
     try {
       // 会话按分类隔离：数据建模任务（CAD 装配/网格）与物理案例混用同一会话时，
@@ -330,16 +365,20 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     }
   }
   if (!navigationError) await page.waitForTimeout(Math.min(5_000, PREPARE_TIMEOUT_MS));
+  // 专用会话的创建/恢复不属于案例面板加载预算；首次创建可能等待一次 AI 回复。
+  const prepareDeadline = Date.now() + PREPARE_TIMEOUT_MS;
 
   let selected = false;
+  let panelExpanded = false;
   let cardsReady = false;
   if (!navigationError) selected = await chooseCategory(page, prepareDeadline - Date.now());
-  if (selected) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
+  if (selected) panelExpanded = await ensureCasePanelExpanded(page, Math.max(0, prepareDeadline - Date.now()));
+  if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
   if (selected && !cardsReady && Date.now() < prepareDeadline) {
-    // 分类已选中但卡片未加载（服务端忙/面板渲染慢）：重试一次分类点击
-    console.log('[batch] 卡片未加载，重试分类点击…');
-    selected = await chooseCategory(page, prepareDeadline - Date.now());
-    if (selected) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
+    // 分类已选中后不能再次点击同一分类（会切换面板状态）；这里只继续等待展开与卡片加载。
+    console.log('[batch] 卡片未加载，继续等待面板展开与分类卡片…');
+    if (!panelExpanded) panelExpanded = await ensureCasePanelExpanded(page, prepareDeadline - Date.now());
+    if (selected && panelExpanded) cardsReady = await waitForCaseCards(page, Math.max(0, prepareDeadline - Date.now()));
   }
   const cards = caseCards(page);
   const cardCount = await cards.count();
@@ -358,7 +397,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     }
     if (CASE_LIMIT > 0) titles.splice(CASE_LIMIT);
   }
-  console.log(`[batch] selected=${selected} cards=${cardCount} cases=${titles.length}${CASE_TITLE ? ` (single: ${CASE_TITLE})` : ''}`);
+  console.log(`[batch] selected=${selected} panelExpanded=${panelExpanded} cards=${cardCount} cases=${titles.length}${CASE_TITLE ? ` (single: ${CASE_TITLE})` : ''}`);
 
   const results = [];
   if (!selected || !cardsReady || titles.length === 0) {
@@ -368,7 +407,9 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       status: 'BLOCKED',
       reason: navigationError
         ? `聊天页加载失败：${navigationError}`
-        : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`,
+        : selected && !panelExpanded
+          ? '分类已选择，但案例面板无法展开'
+          : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`,
       ...(await collectOutput(page))
     });
   }
@@ -657,6 +698,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     categoryLabel: CATEGORY_LABEL,
     dryRun: DRY_RUN,
     selectedCategory: selected,
+    panelExpanded,
     navigationError,
     cardCount,
     matchedCount: titles.length,
