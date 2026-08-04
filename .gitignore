@@ -1,6 +1,9 @@
 node_modules/
 shared/auth/.auth/
 playwright/.auth/
+artifacts/monitor-spool/
+artifacts/core-monitor/*/
+!artifacts/core-monitor/monitor-state.json
 .env
 .env.local
 .env.runner
@@ -15,6 +18,7 @@ results/
 test-results/
 tools/
 # legacy runtime dumps under artifacts (keep docs; ignore noisy dumps)
+artifacts/
 artifacts/monitor-spool/
 artifacts/core-monitor/*/
 !artifacts/core-monitor/monitor-state.json

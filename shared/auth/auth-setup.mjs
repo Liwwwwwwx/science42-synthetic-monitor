@@ -126,3 +126,4 @@ console.log(`已保存 ${storageState}`);
 console.log(`已保存 ${sessionStatePath} (${Object.keys(sessionStorageState).length} entries)`);
 console.log(`目标站 ${baseUrl}`);
 await browser.close();
+console.log(`已保存 ${storageState}`);
