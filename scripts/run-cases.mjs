@@ -17,9 +17,14 @@ const opt = (name, def) => {
 };
 const CATEGORY = opt('category', 'physics').toLowerCase();
 const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
-// 默认串行：实测服务端任务队列是串行执行的，并发 ≥2 时后提交的任务排队撞超时
-//（单跑 52-125s 全过；并发 2/5 全部 TIMEOUT）。并发只在服务端支持并行时再开启。
-const PARALLEL = Number(opt('parallel', 1));
+// 并发通过会话池隔离：每案例占用一个专用会话（--pool=N 槽位，默认 5 = 最大并发），
+// 实测同账号不同会话的任务可并行（2 任务同时通过）；同一会话并发会互相串扰
+//（消息流/面板状态竞争，排队案例撞完成检测窗口）。串行时按池轮训复用会话。
+const PARALLEL = Math.min(Math.max(Number(opt('parallel', 1)) || 1, 1), 5);
+// 会话池大小：并发时案例按顺序取槽位独占会话；串行时轮训。上限即最大并发 5。
+const POOL = Math.min(Math.max(Number(opt('pool', 5)) || 1, 1), 5);
+// 池必须不小于并发数：并发=池上限时全部案例同时启动，槽位不足会重复（会话冲突）。
+const effectivePool = Math.max(POOL, PARALLEL);
 // 默认超时按分类区分：数据建模（CAD 装配/三维网格）任务实测正常完成需 5-10 分钟，
 // 300s 通用预算会截断仍在执行的正常任务；physics/math/material 保持 300s。
 const DEFAULT_TIMEOUT_MS = CATEGORY === 'data' ? 660_000 : 300_000;
@@ -33,7 +38,7 @@ if (args.includes('--help') || args.includes('-h')) {
 }
 
 if (!CATEGORY_LABEL[CATEGORY]) {
-  console.error(`未知分类：${CATEGORY}（可用 physics/math/material）`);
+  console.error(`未知分类：${CATEGORY}（可用 physics/math/material/data）`);
   process.exit(1);
 }
 if (INDICES.some((index) => !Number.isInteger(index) || index < 1) || new Set(INDICES).size !== INDICES.length) {
@@ -87,13 +92,15 @@ function startOne() {
   const selection = selections[cursor++];
   const { title, position } = selection;
   const id = nextId++;
+  // 会话池槽位：按案例启动顺序轮换（1..effectivePool），并发时同一时刻运行中的案例槽位互不重复。
+  const slot = (id % effectivePool) + 1;
   running++;
-  console.log(`[run ${id + 1}] ${title} 启动`);
+  console.log(`[run ${id + 1}] ${title} 启动${PARALLEL > 1 ? `（会话 ${slot}）` : ''}`);
   const child = spawn(
     'npx', ['playwright', 'test', 'suites/batch-cases', '--project=chromium', '--workers=1'],
     {
       cwd: ROOT,
-      env: { ...baseEnv, CASE_TITLE: title, CASE_CATALOG_INDEX: String(position), CASE_RUN_TIMEOUT_MS: String(RUN_TIMEOUT_MS) },
+      env: { ...baseEnv, CASE_TITLE: title, CASE_CATALOG_INDEX: String(position), CASE_RUN_TIMEOUT_MS: String(RUN_TIMEOUT_MS), CASE_CONVERSATION_SLOT: String(slot) },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -105,8 +112,9 @@ function startOne() {
     const status = code === 0 ? 'PASSED' : 'FAILED';
     const line = output.split('\n').find((l) => l.includes(`[case 1/1]`)) || '';
     const m = /- (PASSED|FAILED|TIMEOUT|BLOCKED|DISCOVERED) \((\d+) ms\)/.exec(line);
-    results.push({ position, title, status, code, durationMs: m ? Number(m[2]) : null, detail: m ? m[1] : '' });
-    console.log(`[run ${id + 1}] #${position} ${title} → ${m ? m[1] : status}${m ? ` (${(m[2] / 1000).toFixed(0)}s)` : ''}`);
+    const reason = /\sreason=(.+)$/.exec(line)?.[1]?.trim() || '';
+    results.push({ position, title, status, code, durationMs: m ? Number(m[2]) : null, detail: reason || (m ? m[1] : '') });
+    console.log(`[run ${id + 1}] #${position} ${title} → ${reason || (m ? m[1] : status)}${m ? ` (${(m[2] / 1000).toFixed(0)}s)` : ''}`);
     startOne();
   });
 }

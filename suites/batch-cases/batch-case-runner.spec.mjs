@@ -28,7 +28,30 @@ const CATEGORY_LABEL = {
   data: '数据建模'
 }[CATEGORY] || '物理求解';
 const IS_PHYSICS_CASE = CATEGORY === 'physics';
+// 会话池：同账号并发时每个案例占用一个专用会话，避免在同一会话内互相串扰。
+// 槽位由 run-cases.mjs 按 --pool=N 计算（--pool 默认 5，即最大并发），经环境变量传入。
+const CONVERSATION_SLOT = Number(process.env.CASE_CONVERSATION_SLOT || 0);
+const CONVERSATION_PREFIX = { physics: '物理案例', math: '数学案例', material: '材料案例', data: '数据案例' }[CATEGORY] || '物理案例';
 const IS_DATA_CASE = CATEGORY === 'data';
+const IS_MATERIAL_CASE = CATEGORY === 'material';
+
+// 材料计算（category=model + waterlily 入口）专属验收：以真实 Run 输出定标。
+// 抽样证据（2026-08-04）：
+//  - Run 后会出现「追问与补充」对话框（上传文件 / 继续(60s 自动继续) / 停 止），
+//    默认选项为「停 止」；点击后任务按当前输入继续，不中断已流式输出的答案。
+//  - Profile B（检索综合型，如液冷工质/固态电解质）：中文检索项 → 论文检索进度/检索概览
+//    → 文献证据 → 综合回答；「综合回答」为验收约束字段。
+//  - Profile A（文本分析型，如 3D 打印材料/陶瓷基板，目录未命中或仅需求分析）：
+//    Round 1 + 材料分析章节（材料名称核对/已入库性质/本轮建议 或 需求表）+ 追问推荐，无检索字段。
+//  - 当前材料案例均为文本/检索输出，未见 MaterialsPNG/GLB/STL 结构化产物；产物检查按卡片实际能力记录。
+const MATERIAL_DIALOG_STOP_RE = /停\s*止/;
+const MATERIAL_ZH_SEARCH_RE = /中文检索项/;
+const MATERIAL_RETRIEVAL_PROGRESS_RE = /论文检索进度|检索概览|检索结果重排|文献检索/;
+const MATERIAL_COMPREHENSIVE_RE = /综合回答/;
+const MATERIAL_ZHUITUI_RE = /追问推荐\s*[→>]?/;
+const MATERIAL_ANALYSIS_RE = /材料名称核对|已入库性质|本轮建议|核心材料需求|候选材料|需求与瓶颈的关联/;
+// 综合回答区段的“候选/性能结论”信号：只作用于「综合回答」之后的文本，避免初始确认语误匹配。
+const MATERIAL_CONCLUSION_RE = /候选|结论|方案|性能|指标|建议|推荐/;
 
 // 数据建模（dataAnalytics）专属验收：CAD 组装与建模任务必须出现的流程文案。
 // 以真实 Run 输出定标：规划 → 底层代码 → 几何实体，缺任何一段都视为流程不完整。
@@ -50,13 +73,14 @@ const EXECUTION_COMPLETE_RE = /项目[\s\S]{0,160}执行完成/i;
 const STREAMING_RE = /生成中|正在生成|Generating/i;
 
 // ── 通用验收标准 ─────────────────────────────────────────────
-// 1 分钟无任务输出 = 服务响应超时（数据建模新会话首次任务首输出可能 1-3 分钟，放宽到 3 分钟）
+// 1 分钟无任务输出 = 服务响应超时（数据建模新会话首次任务首输出可能 1-3 分钟；
+// 材料计算任务串行排队，批量场景下靠后的案例首输出会被前面任务挤占，同样放宽到 3 分钟）
 const RESPONSE_TIMEOUT_MS = Number(process.env.CASE_RESPONSE_TIMEOUT_MS
-  || (CATEGORY === 'data' ? 180_000 : 60_000));
+  || (CATEGORY === 'data' || CATEGORY === 'material' ? 180_000 : 60_000));
 // 提问后首输出延迟上限（本地 PINN 实测常 25-35s，默认 45s；可用 CASE_FIRST_REPLY_LIMIT_MS 覆盖。
-// 数据建模新会话首次任务首输出可能 1-3 分钟，放宽到 180s）
+// 数据建模/材料计算新会话首次任务首输出可能 1-3 分钟，放宽到 180s）
 const FIRST_REPLY_LIMIT_MS = Number(process.env.CASE_FIRST_REPLY_LIMIT_MS
-  || (CATEGORY === 'data' ? 180_000 : 45_000));
+  || (CATEGORY === 'data' || CATEGORY === 'material' ? 180_000 : 45_000));
 // 团队服务不可用 = 服务挂了
 const SERVICE_DOWN_RE = /团队服务不可用|服务暂时不可用|服务不可用|服务异常/i;
 // Step 标题（任务流程章节）
@@ -67,6 +91,10 @@ const PNG_RE = /\.png\b|data:image\/png|!\[[^\]]*\]\([^)]*\.png/i;
 const REQUIRED_STEPS = [1, 2, 3, 4, 5, 6];
 // 任务已开始的早期信号（只认「生成中」类实时状态；Step/完成文案会在历史转录里残留，不能扫整页）
 const EARLY_OUTPUT_RE = /生成中|正在生成|Generating/i;
+
+function isDataCaseComplete(dataPhrasesSeen, stlSeen) {
+  return DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen;
+}
 
 /**
  * 从案例标题提取可在自然语言回复中出现的领域词。
@@ -159,6 +187,27 @@ async function assistantSnapshot(page) {
 function isInitialAssistantGreeting(text) {
   return /秋月白为您服务|The Answer to Life, Universe, and Everything/i.test(text)
     && !EXECUTION_COMPLETE_RE.test(text);
+}
+
+/**
+ * 点击 Run 后会话 DOM 会重渲染（React 重挂载消息列表，data-message-id 整体变化），
+ * 点击前拍的快照会全部失效。等消息集合连续两次快照一致（重渲染完成）后返回最终快照，
+ * 作为 latestNewAssistant 的基线；若重渲染持续（最多等 timeoutMs），返回最后一次快照。
+ * 用于替代“点击前拍快照”，避免历史消息被 latestNewAssistant 误判为“新增”。
+ */
+async function waitForAssistantSettled(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let previous = await assistantSnapshot(page);
+  await page.waitForTimeout(500);
+  while (Date.now() < deadline) {
+    const current = await assistantSnapshot(page);
+    if (current.size === previous.size && [...current].every((value) => previous.has(value))) {
+      return current;
+    }
+    previous = current;
+    await page.waitForTimeout(500);
+  }
+  return previous;
 }
 
 /**
@@ -358,8 +407,15 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   if (!navigationError) {
     try {
       // 会话按分类隔离：数据建模任务（CAD 装配/网格）与物理案例混用同一会话时，
-      // 失败历史（如代码迭代多次失败）会残留并让服务端直接拒绝下一轮 Run。
-      await ensureMonitoringConversation(page, IS_DATA_CASE ? '【自动化测试】数据建模' : '【自动化测试】物理案例');
+      // 失败历史会残留并让服务端直接拒绝下一轮 Run。
+      // 并发时（CASE_CONVERSATION_SLOT>0）改用槽位专用会话（物理案例-N/数据案例-N），
+      // 每个并发案例独占一个会话，互不串扰；切换失败则整卡 BLOCKED，不静默回退共用会话。
+      // 材料计算也使用独立会话：与物理案例混用会让物理历史（如 Step 文案）污染材料验收，
+      // 且失败历史残留会拒绝下一轮 Run。
+      const conversationTitle = CONVERSATION_SLOT > 0
+        ? `${CONVERSATION_PREFIX}-${CONVERSATION_SLOT}`
+        : (IS_DATA_CASE ? '【自动化测试】数据建模' : IS_MATERIAL_CASE ? '【自动化测试】材料计算' : '【自动化测试】物理案例');
+      await ensureMonitoringConversation(page, conversationTitle);
     } catch (error) {
       navigationError = `${CATEGORY_LABEL}专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -398,6 +454,12 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     if (CASE_LIMIT > 0) titles.splice(CASE_LIMIT);
   }
   console.log(`[batch] selected=${selected} panelExpanded=${panelExpanded} cards=${cardCount} cases=${titles.length}${CASE_TITLE ? ` (single: ${CASE_TITLE})` : ''}`);
+  // 单进程全量跑多个案例时，按案例数放大全局超时：
+  // 固定 450s 只够 1 个案例（前置 90s + 单案例 300s + 缓冲），7 个材料案例会掐断后续任务。
+  if (titles.length > 1) {
+    const perCaseBudget = RUN_TIMEOUT + 60_000;
+    testInfo.setTimeout(PREPARE_TIMEOUT_MS + titles.length * perCaseBudget + 60_000);
+  }
 
   const results = [];
   if (!selected || !cardsReady || titles.length === 0) {
@@ -432,23 +494,54 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     };
     const started = Date.now();
     try {
+      // 上一个案例 Run 后面板可能重新折叠（产品会记住折叠状态），
+      // 先确保面板展开再按标题找下一张卡片，否则后续案例全部 BLOCKED。
+      if (index > 0) {
+        await ensureCasePanelExpanded(page, 15_000);
+      }
       const card = await cardByTitle(page, title);
       if (!card || !(await card.isVisible().catch(() => false))) {
         result.reason = CASE_TITLE ? `未找到指定案例：${CASE_TITLE}` : '案例卡片在执行前不可见';
       } else {
         result.inputs = await cardInputs(card);
-        const run = card.getByRole('button', { name: 'Run', exact: true });
+        let run = card.getByRole('button', { name: 'Run', exact: true });
         if (await run.count() === 0) {
           result.reason = '案例卡片未提供可定位的 Run 按钮';
         } else if (DRY_RUN) {
           result.status = 'DISCOVERED';
           result.reason = '盘点模式：未点击 Run';
         } else {
-          await run.scrollIntoViewIfNeeded();
-          const assistantBefore = await assistantSnapshot(page);
-          const t0 = Date.now();
-          await run.click();
-          result.status = 'RUNNING';
+          // 点击 Run：显式超时 + 失败重试。之前这里没有超时保护，按钮被遮挡/不可点时
+          // click 会一直等到批量 test 超时（曾实测 24 分钟空转）；重试前重新展开面板
+          // 并重找卡片（Run 后面板可能折叠导致按钮不可点）。
+          let clicked = false;
+          let clickError = null;
+          for (let attempt = 0; attempt < 2 && !clicked; attempt += 1) {
+            if (attempt > 0) {
+              await ensureCasePanelExpanded(page, 15_000);
+              const refreshed = await cardByTitle(page, title);
+              if (refreshed && (await refreshed.isVisible().catch(() => false))) {
+                run = refreshed.getByRole('button', { name: 'Run', exact: true });
+              }
+            }
+            try {
+              await run.scrollIntoViewIfNeeded({ timeout: 8_000 });
+              await run.click({ timeout: 15_000 });
+              clicked = true;
+            } catch (error) {
+              clickError = error instanceof Error ? error : new Error(String(error));
+            }
+          }
+          if (!clicked) {
+            result.reason = `Run 按钮点击失败（已重试）：${clickError?.message.split('\n')[0] || '未知错误'}`;
+          } else {
+            // 点击成功后，会话 DOM 会重渲染（data-message-id 整体变化），点击前拍的
+            // assistantBefore 快照全部失效 → 历史消息会被 latestNewAssistant 误判为
+            // “新增”（曾实测 4 秒假通过：首输出 237ms、材料信号全来自历史消息）。
+            // 先等重渲染稳定（连续两次快照一致或最多 8s），再以稳定后的快照为基线。
+            const assistantBefore = await waitForAssistantSettled(page, 8_000);
+            const t0 = Date.now();
+            result.status = 'RUNNING';
 
           // ── 验收数据采集轮询 ────────────────────────────
           let firstOutputMs = null;   // 点 Run 到首次输出的延迟
@@ -461,15 +554,48 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           let dataComplete = false;
           let newFailure = false;
           let newComplete = false;
+          // 材料计算：追问与补充对话框 + Profile 字段
+          let materialDialogSeen = false;
+          let materialDialogDismissed = false;
+          let materialZhSearchSeen = false;
+          let materialRetrievalProgressSeen = false;
+          let materialComprehensiveSeen = false;
+          let materialZhuituiSeen = false;
+          let materialAnalysisSeen = false;
+          let materialDone = false;
+          let materialProducts = [];
+          // 本次 Run 实际出现完成信号（综合回答 或 追问推荐+分析章节）的消息文本。
+          // 会话重渲染后 latestNewAssistant 可能因消息 id 变化把历史消息误判为“新增”，
+          // 用该文本作为材料验收的权威文本，避免最终快照被历史消息覆盖。
+          let materialPeakText = '';
+          // latestNewAssistant 连续返回 null 的轮次：回复稳定后 DOM 重渲染会短暂无消息，
+          // 材料信号齐全时按此提前收尾，避免 60s 无输出误判 stall。
+          let nullRounds = 0;
           let assistant = null;
           let assistantText = '';
           let previousAssistantText = '';
           let stableRounds = 0;
           let genericComplete = false;
+          // 材料计算：最近一次有输出消息的时间（用于“距上次输出超过 60s”的 stall 判据）
+          let lastAssistantUpdateMs = null;
+          // 材料完成信号：Profile B=综合回答；Profile A=分析章节+追问推荐
+          const materialSignals = () => materialComprehensiveSeen || (materialZhuituiSeen && materialAnalysisSeen);
 
           const deadline = t0 + RUN_TIMEOUT;
           while (Date.now() < deadline) {
             const now = Date.now();
+            // 材料计算：Run 后会出现「追问与补充」对话框，默认选「停 止」后任务继续完成。
+            // 对话框是页面悬浮层（按钮只在弹层存在），与聊天转录中的历史文案无关。
+            if (IS_MATERIAL_CASE && !materialDialogDismissed) {
+              const stopBtn = page.locator('button').filter({ hasText: MATERIAL_DIALOG_STOP_RE }).last();
+              if (await stopBtn.isVisible({ timeout: 1_000 }).catch(() => false)) {
+                materialDialogSeen = true;
+                await stopBtn.click({ timeout: 2_000 }).catch(() => {});
+                if (!(await stopBtn.isVisible({ timeout: 1_000 }).catch(() => false))) {
+                  materialDialogDismissed = true;
+                }
+              }
+            }
             const current = await latestNewAssistant(page, assistantBefore);
             const pageText = (await page.locator('body').innerText().catch(() => '')).slice(-8_000);
 
@@ -484,12 +610,29 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             }
 
             if (!current || !current.text.trim()) {
-              if (now - t0 > RESPONSE_TIMEOUT_MS) { stallDetected = true; break; }
+              nullRounds += 1;
+              // 材料计算：完成信号已齐全，只是 DOM 重渲染导致暂时取不到消息 → 视为已完成。
+              if (IS_MATERIAL_CASE && materialSignals() && nullRounds >= 3 && !STREAMING_RE.test(assistantText || '')) {
+                materialDone = true;
+                break;
+              }
+              // 材料计算：60s 无输出的判据是“距上次有输出超过 60s”，不是“点击后 60s 内的任意空轮”。
+              // 检索综合型回答可能流式输出 1-2 分钟，中间空轮不应截断仍在执行的正常任务。
+              if (IS_MATERIAL_CASE) {
+                const noOutputYet = lastAssistantUpdateMs === null && now - t0 > RESPONSE_TIMEOUT_MS;
+                const outputStalled = lastAssistantUpdateMs !== null && now - lastAssistantUpdateMs > RESPONSE_TIMEOUT_MS;
+                if (noOutputYet || outputStalled) { stallDetected = true; break; }
+              } else if (now - t0 > RESPONSE_TIMEOUT_MS) {
+                stallDetected = true;
+                break;
+              }
               // 前 30s 用更密轮询，减少首输出测量误差
               await page.waitForTimeout(now - t0 < 30_000 ? 500 : 1_500);
               continue;
             }
 
+            nullRounds = 0;
+            lastAssistantUpdateMs = now;
             assistant = current;
             assistantText = current.text;
 
@@ -500,12 +643,6 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             newFailure = FAILURE_RE.test(assistantText);
             newComplete = EXECUTION_COMPLETE_RE.test(assistantText);
             genericComplete = newComplete || (!STREAMING_RE.test(assistantText) && stableRounds >= 2);
-            // 数据建模：流程文案 4 段齐全且 stl 产物出现才算完成；不能像通用分类那样
-            // 因回复停顿（stableRounds）提前 break——几何实体与 stl 文件是流程后半段的产物。
-            dataComplete = IS_DATA_CASE
-              ? DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen
-              : false;
-            if (newFailure || (IS_PHYSICS_CASE ? newComplete : (IS_DATA_CASE ? dataComplete : genericComplete))) break;
 
             if (IS_PHYSICS_CASE) {
               for (const m of assistantText.matchAll(STEP_RE)) stepsSeen.add(Number(m[1]));
@@ -517,6 +654,29 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               }
               if (STL_RE.test(assistantText)) stlSeen = true;
             }
+            if (IS_MATERIAL_CASE) {
+              if (MATERIAL_ZH_SEARCH_RE.test(assistantText)) materialZhSearchSeen = true;
+              if (MATERIAL_RETRIEVAL_PROGRESS_RE.test(assistantText)) materialRetrievalProgressSeen = true;
+              if (MATERIAL_COMPREHENSIVE_RE.test(assistantText)) materialComprehensiveSeen = true;
+              if (MATERIAL_ZHUITUI_RE.test(assistantText)) materialZhuituiSeen = true;
+              if (MATERIAL_ANALYSIS_RE.test(assistantText)) materialAnalysisSeen = true;
+              // 只记录“当前文本自身含完成信号”的版本，历史消息（无信号）不会覆盖真实材料回答。
+              const curComplete = MATERIAL_COMPREHENSIVE_RE.test(assistantText)
+                || (MATERIAL_ZHUITUI_RE.test(assistantText) && MATERIAL_ANALYSIS_RE.test(assistantText));
+              if (curComplete && assistantText.length > materialPeakText.length) materialPeakText = assistantText;
+            }
+            // 数据建模：先吸收本轮新增流程文案与 STL，再判断完成。
+            // 否则最终产物在截止轮出现时，会留下“流程/STL 通过、完成失败”的矛盾结果。
+            dataComplete = IS_DATA_CASE ? isDataCaseComplete(dataPhrasesSeen, stlSeen) : false;
+            // 材料计算：回复稳定（非流式中）且出现完成信号才算结束。
+            // Profile B=综合回答出现；Profile A=分析章节+追问推荐出现。
+            // 不能用通用 stableRounds 提前 break：检索流程中间会出现十几秒的停顿，
+            // 停顿后还会继续流式输出（中文检索项/检索概览/综合回答）。
+            materialDone = IS_MATERIAL_CASE
+              ? !STREAMING_RE.test(assistantText) && (stableRounds >= 2 || nullRounds >= 3)
+                && materialSignals()
+              : false;
+            if (newFailure || (IS_PHYSICS_CASE ? newComplete : IS_DATA_CASE ? dataComplete : IS_MATERIAL_CASE ? materialDone : genericComplete)) break;
             await page.waitForTimeout(now - t0 < 30_000 ? 500 : 1_500);
           }
 
@@ -526,6 +686,8 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           result.pageTail = current.pageTail;
           assistant = assistant || await latestNewAssistant(page, assistantBefore);
           assistantText = assistant?.text || assistantText;
+          // 材料计算：以本次 Run 出现完成信号的消息文本为准（防历史消息覆盖）。
+          if (IS_MATERIAL_CASE && materialPeakText) assistantText = materialPeakText;
           if (assistantText) {
             for (const m of assistantText.matchAll(STEP_RE)) stepsSeen.add(Number(m[1]));
             if (PNG_RE.test(assistantText)) pngSeen = true;
@@ -537,7 +699,16 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
                 if (assistantText.includes(phrase)) dataPhrasesSeen.add(phrase);
               }
               if (STL_RE.test(assistantText)) stlSeen = true;
-              dataComplete = DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen;
+              dataComplete = isDataCaseComplete(dataPhrasesSeen, stlSeen);
+            }
+            if (IS_MATERIAL_CASE) {
+              if (MATERIAL_ZH_SEARCH_RE.test(assistantText)) materialZhSearchSeen = true;
+              if (MATERIAL_RETRIEVAL_PROGRESS_RE.test(assistantText)) materialRetrievalProgressSeen = true;
+              if (MATERIAL_COMPREHENSIVE_RE.test(assistantText)) materialComprehensiveSeen = true;
+              if (MATERIAL_ZHUITUI_RE.test(assistantText)) materialZhuituiSeen = true;
+              if (MATERIAL_ANALYSIS_RE.test(assistantText)) materialAnalysisSeen = true;
+              materialDone = !STREAMING_RE.test(assistantText) && (stableRounds >= 2 || nullRounds >= 3)
+                && materialSignals();
             }
           }
           result.assistantText = assistantText.slice(-12_000);
@@ -552,7 +723,25 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             stlSeen = await assistant.content.locator('a[href*=".stl"], img[src*=".stl"], [class*="stl" i], [aria-label*="STL"], [title*=".stl"]')
               .count().then((n) => n > 0).catch(() => false);
           }
+          // DOM 兜底发现 STL 后也必须同步完成状态，避免检查项彼此矛盾。
+          if (IS_DATA_CASE) dataComplete = isDataCaseComplete(dataPhrasesSeen, stlSeen);
+          // 材料计算：结构化产物按卡片实际能力记录（查看器按钮/文件引用），只认本次新增消息内的产物，
+          // 会话历史里的 3D 查看器（如数据建模的 STL）不能算作材料案例产物。
+          if (IS_MATERIAL_CASE && assistant) {
+            materialProducts = await assistant.content.evaluate((root) => {
+              const hrefs = [...root.querySelectorAll('a[href], img[src]')].map((el) => el.href || el.src || '');
+              const viewers = [...root.querySelectorAll('button')]
+                .filter((b) => /保存到资产|重置视角|引用文件/.test(b.textContent || '')).length;
+              const types = [];
+              if (hrefs.some((h) => /\.(stl|glb|gltf)([?#]|$)/i.test(h)) || viewers > 0) types.push('3D查看器/GLB-STL');
+              if (hrefs.some((h) => /\.png([?#]|$)/i.test(h)) || /data:image\/png/.test(root.textContent || '')) types.push('PNG');
+              return types;
+            }).catch(() => []);
+          }
           const codeBlocks = IS_PHYSICS_CASE && assistant ? await codeBlockSteps(assistant.content) : { s5: false, s6: false };
+          const materialProfile = IS_MATERIAL_CASE
+            ? (materialComprehensiveSeen ? 'retrieval' : (materialZhuituiSeen && materialAnalysisSeen ? 'analysis' : null))
+            : null;
 
           // ── 验收判定 ────────────────────────────────────
           const itemChecks = [];
@@ -651,17 +840,84 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             }
           }
 
-          // 物理求解必须出现任务完成标志；数据建模按专属流程（文案齐全 + stl）；其他分类只要求新增回复已结束。
+          // 材料计算（model + waterlily）专属验收：追问与补充处理 / Profile / 候选结论 / 结构化产物 / 内容匹配。
+          // 不继承物理的 Step 1-6 / PNG 要求；Profile 与字段按真实 Run 定标。
+          if (IS_MATERIAL_CASE) {
+            if (serviceDown) {
+              skip('material_dialog', '服务不可用，未进入执行');
+            } else if (materialDialogSeen && materialDialogDismissed) {
+              pass('material_dialog', '「追问与补充」对话框已按默认「停 止」关闭');
+            } else if (materialDialogSeen) {
+              fail('material_dialog', 'DIALOG_STUCK', '「追问与补充」对话框出现但无法关闭（停 止 按钮不可用）');
+            } else {
+              pass('material_dialog', '未出现「追问与补充」对话框，无需处理');
+            }
+
+            if (serviceDown) {
+              skip('material_profile', '服务不可用，未进入执行');
+            } else if (materialProfile === 'retrieval' && materialZhSearchSeen && materialRetrievalProgressSeen) {
+              pass('material_profile', '检索综合型流程完整：中文检索项+检索进度+综合回答');
+            } else if (materialProfile === 'retrieval') {
+              fail('material_profile', 'NO_RETRIEVAL_PROGRESS', `出现「综合回答」但检索字段缺失：中文检索项=${materialZhSearchSeen}，检索进度=${materialRetrievalProgressSeen}`);
+            } else if (materialProfile === 'analysis') {
+              pass('material_profile', '文本分析型流程完整：材料分析章节+追问推荐');
+            } else {
+              fail('material_profile', 'NO_MATERIAL_PROFILE', '未检测到「综合回答」或「追问推荐」任一完成信号');
+            }
+
+            if (serviceDown) {
+              skip('material_conclusion', '服务不可用，未进入执行');
+            } else if (materialProfile === 'retrieval') {
+              const comprehensiveSection = assistantText.includes('综合回答')
+                ? assistantText.slice(assistantText.indexOf('综合回答'))
+                : '';
+              if (MATERIAL_CONCLUSION_RE.test(comprehensiveSection)) {
+                pass('material_conclusion', '综合回答区段包含候选/性能/方案结论');
+              } else {
+                fail('material_conclusion', 'NO_MATERIAL_CONCLUSION', '综合回答区段缺少候选或性能结论表述');
+              }
+            } else if (materialZhuituiSeen) {
+              pass('material_conclusion', '文本分析已给出追问推荐/本轮建议');
+            } else {
+              fail('material_conclusion', 'NO_MATERIAL_CONCLUSION', '未给出候选、结论或追问推荐');
+            }
+
+            if (serviceDown) {
+              skip('material_product', '服务不可用，未进入执行');
+            } else if (materialProducts.length > 0) {
+              pass('material_product', `检测到结构化产物：${materialProducts.join('/')}`);
+            } else {
+              pass('material_product', '文本型输出，无结构化产物（按卡片实际能力验收）');
+            }
+
+            if (serviceDown) {
+              skip('keyword', '服务不可用，未进入执行');
+            } else {
+              const keywordMatch = matchCaseKeywords(title, assistantText);
+              if (keywordMatch.matched) {
+                pass('keyword', `本次回复命中领域词：${keywordMatch.hits.join('/')}`);
+              } else {
+                fail('keyword', 'KEYWORD_MISMATCH', `本次回复领域词不足（命中 ${keywordMatch.hits.join('/') || '无'}；至少需 ${keywordMatch.requiredHits} 项）`);
+              }
+            }
+          }
+
+          // 物理求解必须出现任务完成标志；数据建模按专属流程（文案齐全 + stl）；
+          // 材料计算按自身 Profile 完成（综合回答 或 追问推荐）；其他分类只要求新增回复已结束。
           if (serviceDown) {
             skip('complete', '服务不可用，未进入执行');
           } else if (IS_PHYSICS_CASE && newComplete) {
             pass('complete', '检测到物理任务「执行完成」');
           } else if (IS_DATA_CASE && dataComplete) {
             pass('complete', '数据建模流程完整：流程文案齐全且 stl 文件已生成');
-          } else if (!IS_PHYSICS_CASE && !IS_DATA_CASE && genericComplete) {
+          } else if (IS_MATERIAL_CASE && materialDone) {
+            pass('complete', materialProfile === 'retrieval'
+              ? '材料检索流程完整：综合回答已生成'
+              : '材料分析流程完整：追问推荐已给出');
+          } else if (!IS_PHYSICS_CASE && !IS_DATA_CASE && !IS_MATERIAL_CASE && genericComplete) {
             pass('complete', '新增 assistant 回复已完成');
           } else {
-            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : (IS_DATA_CASE ? '数据建模流程未走完（文案或 stl 产物缺失）' : '新增回复仍在生成或未完成')));
+            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : IS_DATA_CASE ? '数据建模流程未走完（文案或 stl 产物缺失）' : IS_MATERIAL_CASE ? `材料流程未走完（已见 综合回答=${materialComprehensiveSeen}，中文检索项=${materialZhSearchSeen}，追问推荐=${materialZhuituiSeen}，稳定轮=${stableRounds}，空轮=${nullRounds}）` : '新增回复仍在生成或未完成'));
           }
 
           result.checks = itemChecks;
@@ -671,13 +927,30 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           result.codeBlocks = { s5: codeBlocks.s5, s6: codeBlocks.s6 };
           result.dataPhrases = IS_DATA_CASE ? [...dataPhrasesSeen] : null;
           result.stlSeen = IS_DATA_CASE ? stlSeen : null;
-          result.keywordHit = IS_PHYSICS_CASE && !serviceDown
+          result.materialProfile = IS_MATERIAL_CASE ? materialProfile : null;
+          result.materialFields = IS_MATERIAL_CASE ? {
+            dialogSeen: materialDialogSeen,
+            dialogDismissed: materialDialogDismissed,
+            zhSearch: materialZhSearchSeen,
+            retrievalProgress: materialRetrievalProgressSeen,
+            comprehensive: materialComprehensiveSeen,
+            zhuitui: materialZhuituiSeen,
+            analysis: materialAnalysisSeen,
+          } : null;
+          result.materialProducts = IS_MATERIAL_CASE ? materialProducts : null;
+          result.materialDebug = IS_MATERIAL_CASE ? {
+            peakLen: materialPeakText.length,
+            stableRounds,
+            nullRounds,
+          } : null;
+          result.keywordHit = (IS_PHYSICS_CASE || IS_MATERIAL_CASE) && !serviceDown
             ? matchCaseKeywords(title, assistantText).matched
             : null;
           result.status = itemChecks.every((c) => c.status === 'passed') ? 'PASSED' : 'FAILED';
           if (result.status !== 'PASSED') {
             result.reason = itemChecks.filter((c) => c.status !== 'passed').map((c) => `${c.key}:${c.errorCode || c.status}`).join(',');
           }
+          } // 关闭「Run 点击成功」else 块（waitForAssistantSettled 基线模式）
         }
       }
     } catch (error) {
@@ -688,7 +961,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     result.durationMs = Date.now() - started;
     result.finishedAt = new Date().toISOString();
     results.push(result);
-    console.log(`[case ${index + 1}/${titles.length}] ${title} - ${result.status} (${result.durationMs} ms)`);
+    console.log(`[case ${index + 1}/${titles.length}] ${title} - ${result.status} (${result.durationMs} ms)${result.reason ? ` reason=${result.reason}` : ''}`);
   }
 
   const report = {
@@ -729,6 +1002,10 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               complete: '执行完成',
               cad_flow: '建模流程文案',
               stl_file: 'STL 文件',
+              material_dialog: '追问与补充',
+              material_profile: '材料流程',
+              material_conclusion: '候选/结论',
+              material_product: '结构化产物',
             }[c.key] || c.key;
             const detail = String(c.message || '').slice(0, 200);
             const failed = c.status !== 'passed';
@@ -752,7 +1029,9 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
         const catalogPrefix = CASE_CATALOG_INDEX > 0 ? `#${CASE_CATALOG_INDEX} ` : '';
         const blockedTitle = `${catalogPrefix}${(r.title || '案例').slice(0, 40)}`.trim();
         return [{
-          key: checkKey(`${CATEGORY}_${r.title || `case_${i + 1}`}`, `${CATEGORY}_item`),
+          // 中文标题经 checkKey 归一化后会塌缩成同一 key（如 material），
+          // 用案例序号生成唯一标识，标题保留在 messageZh 中展示。
+          key: checkKey(`${CATEGORY}_case_${i + 1}`, `${CATEGORY}_item`),
           status: mapItemStatus(r.status),
           durationMs: r.durationMs || 0,
           errorCode: ['PASSED', 'DISCOVERED'].includes(r.status) ? null : (r.status || 'FAILED'),
