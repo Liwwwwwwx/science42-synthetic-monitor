@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "Stable suite IDs for Admin backend display. Do not rename ids without a migration.",
+  "suites": [
+    {
+      "id": "basic_flow",
+      "name": "基础功能",
+      "kind": "suite",
+      "path": "suites/basic-flow",
+      "npm": "monitor:basic",
+      "reportsToBackend": "ready",
+      "summary": "登录态 + 1 题真实问答快检；刷新恢复与 40 轮长对话仅通过本地 test:basic 全量回归执行"
+    },
+    {
+      "id": "case_catalog",
+      "name": "案例目录",
+      "kind": "suite",
+      "path": "suites/case-catalog",
+      "npm": "test:case-catalog",
+      "reportsToBackend": "ready",
+      "summary": "检查 /cases 卡片与分类入口"
+    },
+    {
+      "id": "markdown_render",
+      "name": "Markdown/LaTeX 渲染",
+      "kind": "suite",
+      "path": "suites/markdown-render",
+      "npm": "test:markdown",
+      "reportsToBackend": "ready",
+      "summary": "表格/代码/公式/样式渲染"
+    },
+    {
+      "id": "batch_cases",
+      "name": "研发案例批量",
+      "kind": "suite",
+      "path": "suites/batch-cases",
+      "npm": "test:batch-cases",
+      "reportsToBackend": "ready",
+      "summary": "按分类批量点 Run；物理求解额外验收步骤、代码和 PNG 产物"
+    },
+    {
+      "id": "team_api",
+      "name": "团队 API 探测",
+      "kind": "probe",
+      "path": "probes/team-api",
+      "npm": "probe:team-api",
+      "reportsToBackend": "ready",
+      "summary": "团队只读接口可达性"
+    }
+  ]
+}
