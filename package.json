@@ -4,19 +4,19 @@
   "type": "module",
   "scripts": {
     "pw:install": "playwright install chromium",
-    "auth:setup": "node playwright/auth-setup.mjs",
-    "test:s10": "playwright test playwright/s10.spec.mjs --project=chromium",
-    "test:s30b": "playwright test playwright/s30b.spec.mjs --project=chromium --workers=1",
-    "capture:responses": "playwright test playwright/capture-responses.spec.mjs --project=chromium --workers=1",
-    "test:core-regression": "playwright test playwright/core-flow-regression.spec.mjs --project=chromium --workers=1",
-    "probe:team-api": "node api/team-interface-probe.mjs",
-    "test:case-catalog": "playwright test playwright/case-catalog.spec.mjs --project=chromium --workers=1",
-    "test:sr30": "playwright test playwright/session-recovery.spec.mjs --project=chromium",
-    "monitor": "powershell -ExecutionPolicy Bypass -File monitor/run-monitor.ps1",
-    "monitor:core": "node monitor/core-flow-monitor.mjs",
-    "monitor:core:admin-local": "node monitor/run-admin-local.mjs"
+    "auth:setup": "node --env-file=.env shared/auth/auth-setup.mjs",
+    "test:basic": "playwright test suites/basic-flow --project=chromium --workers=1",
+    "monitor:basic": "BASIC_FLOW_MODE=quick playwright test suites/basic-flow --project=chromium --workers=1",
+    "test:case-catalog": "playwright test suites/case-catalog --project=chromium --workers=1",
+    "test:markdown": "playwright test suites/markdown-render --project=chromium --workers=1",
+    "test:batch-cases": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
+    "test:case": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
+    "run:cases": "node scripts/run-cases.mjs",
+    "test:batch-all": "node --env-file=.env suites/batch-cases/run-all-case-categories.mjs",
+    "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0"
+    "@playwright/test": "^1.55.0",
+    "dotenv": "^17.4.2"
   }
 }

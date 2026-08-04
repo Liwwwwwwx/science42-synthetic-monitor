@@ -16,7 +16,7 @@ try {
 }
 
 if (!process.exitCode) {
-  const result = spawnSync(process.execPath, ['monitor/core-flow-monitor.mjs'], {
+  const result = spawnSync(process.execPath, ['runners/core-link/core-flow-monitor.mjs'], {
     stdio: 'inherit',
     env: {
       ...process.env,
