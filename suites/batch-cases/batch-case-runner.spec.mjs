@@ -318,10 +318,12 @@ async function ensureCasePanelExpanded(page, timeoutMs = 10_000) {
     const toggle = await panelToggleOf(panel);
     if (!toggle) return false;
     try {
-      await toggle.click({ timeout: 3_000 });
+      const clickBudget = Math.max(1, Math.min(3_000, deadline - Date.now()));
+      await toggle.click({ timeout: clickBudget });
       clickAttempts += 1;
       console.log(`[batch] 面板展开点击 #${clickAttempts}（${source}）`);
-      await page.waitForTimeout(CLICK_SETTLE_MS);
+      const settleBudget = Math.max(0, Math.min(CLICK_SETTLE_MS, deadline - Date.now()));
+      if (settleBudget > 0) await page.waitForTimeout(settleBudget);
       return true;
     } catch {
       // 定位器失效（点击瞬间 DOM 重渲染）：下一轮重新定位再试。
@@ -363,7 +365,8 @@ async function ensureCasePanelExpanded(page, timeoutMs = 10_000) {
         }
       }
     }
-    await page.waitForTimeout(500);
+    const retryBudget = Math.max(0, Math.min(500, deadline - Date.now()));
+    if (retryBudget > 0) await page.waitForTimeout(retryBudget);
   }
   console.log(`[batch] 面板展开失败：${timeout}ms 预算内共点击 ${clickAttempts} 次`);
   return false;
