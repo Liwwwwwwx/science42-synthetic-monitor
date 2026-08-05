@@ -290,34 +290,82 @@ function caseCards(page) {
 /**
  * 新版 Science42 会记住案例面板的折叠状态。分类按钮即使可见、可点击，
  * 折叠状态下也不会挂载 cardList，因此必须先展开面板再等待案例卡片。
+ *
+ * 2026-08-05（SCIENCEADMIN-23）：原实现点击展开箭头后一次性等待 cardList，
+ * 等不到直接失败（只有 1 次点击机会），且「搜索案例」标签不可见时全程空转。
+ * 改为预算内反复重试：每轮重新定位展开入口（collapseIcon，缺失时兜底面板
+ * 头部），点击后短等待再检查，未展开则下一轮再试，直到预算耗尽。
  */
 async function ensureCasePanelExpanded(page, timeoutMs = 10_000) {
   const timeout = Math.max(1, timeoutMs);
   const deadline = Date.now() + timeout;
+  // 点击次数上限：防御产品端点击无效但 DOM 反复抖动时的无限点击。
+  const maxClickAttempts = 10;
+  let clickAttempts = 0;
+  const CLICK_SETTLE_MS = 1_500; // 点击后等待面板状态切换的时间
+
+  // 面板展开入口：优先 collapseIcon，缺失时兜底面板头部（header/title 区域）。
+  async function panelToggleOf(panel) {
+    const toggle = panel.locator('div[class*="collapseIcon"]').first();
+    if (await toggle.isVisible().catch(() => false)) return toggle;
+    const header = panel.locator('div[class*="header"], div[class*="title"]').first();
+    if (await header.isVisible().catch(() => false)) return header;
+    return null;
+  }
+
+  async function tryExpandPanel(panel, source) {
+    if (clickAttempts >= maxClickAttempts) return false;
+    const toggle = await panelToggleOf(panel);
+    if (!toggle) return false;
+    try {
+      await toggle.click({ timeout: 3_000 });
+      clickAttempts += 1;
+      console.log(`[batch] 面板展开点击 #${clickAttempts}（${source}）`);
+      await page.waitForTimeout(CLICK_SETTLE_MS);
+      return true;
+    } catch {
+      // 定位器失效（点击瞬间 DOM 重渲染）：下一轮重新定位再试。
+      return false;
+    }
+  }
+
   while (Date.now() < deadline) {
+    // 0) 任一面板已展开（cardList 可见）→ 成功。
+    const anyCardList = page.locator('div[class*="cardList"]').first();
+    if (await anyCardList.isVisible().catch(() => false)) return true;
+
+    let clicked = false;
+    // 1) 主路径：「搜索案例」标签定位面板 → collapseIcon / 头部展开。
     const labels = page.getByText('搜索案例', { exact: true });
     for (let index = await labels.count() - 1; index >= 0; index -= 1) {
       const searchLabel = labels.nth(index);
       if (!(await searchLabel.isVisible().catch(() => false))) continue;
-
       const panel = searchLabel.locator(
         'xpath=ancestor::div[contains(@class,"ActionCardPanel") and contains(@class,"panel")][1]'
       );
-      const cardList = panel.locator('div[class*="cardList"]').first();
-      if (await cardList.isVisible().catch(() => false)) return true;
-
-      const toggle = panel.locator('div[class*="collapseIcon"]').first();
-      if (!(await toggle.isVisible().catch(() => false))) continue;
-      const remaining = Math.max(1, deadline - Date.now());
-      try {
-        await toggle.click({ timeout: Math.min(remaining, 5_000) });
-      } catch {
-        continue;
+      if (await panel.locator('div[class*="cardList"]').first().isVisible().catch(() => false)) return true;
+      if (await tryExpandPanel(panel, 'collapseIcon 路径')) {
+        clicked = true;
+        break;
       }
-      return cardList.isVisible({ timeout: remaining }).catch(() => false);
+    }
+    // 2) 兜底路径：主路径未产生点击（标签不可见或展开入口缺失）时，
+    //    遍历 ActionCardPanel 面板本体尝试展开，避免全程空转。
+    if (!clicked) {
+      const panels = page.locator('div[class*="ActionCardPanel"][class*="panel"]');
+      for (let i = 0; i < await panels.count(); i += 1) {
+        const panel = panels.nth(i);
+        if (!(await panel.isVisible().catch(() => false))) continue;
+        if (await panel.locator('div[class*="cardList"]').first().isVisible().catch(() => false)) return true;
+        if (await tryExpandPanel(panel, '面板兜底路径')) {
+          clicked = true;
+          break;
+        }
+      }
     }
     await page.waitForTimeout(500);
   }
+  console.log(`[batch] 面板展开失败：${timeout}ms 预算内共点击 ${clickAttempts} 次`);
   return false;
 }
 
