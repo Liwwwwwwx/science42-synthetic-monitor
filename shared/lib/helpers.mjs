@@ -47,10 +47,25 @@ export async function assertConversationAuthenticated(page) {
 export async function newConversation(page) {
   await page.goto(cfg.chatPath);
   const newChat = page.getByRole('button', { name: '新建聊天', exact: true });
-  if (await newChat.isVisible().catch(() => false)) {
-    await newChat.click();
-    await page.waitForTimeout(500);
+  // 必须等待「新建聊天」按钮渲染后再点击：并发批量任务时服务器同时跑多个
+  // chromium、页面渲染慢，goto 后立即检查 isVisible 会拿到 false → 跳过点击 →
+  // 消息发到当前旧会话 → 无新会话创建 → ensureMonitoringConversation 轮询
+  // 找不到新 conversation id → 整卡 BLOCKED（2026-08-05 服务器并发实测）。
+  let clicked = false;
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline && !clicked) {
+    if (await newChat.isVisible().catch(() => false)) {
+      await newChat.click().catch(() => {});
+      await page.waitForTimeout(800);
+      const input = page.locator(cfg.selectors.input).last();
+      // 点击生效的标志：输入框存在且可见（新会话视图渲染完成）。
+      clicked = (await input.count()) > 0 && (await input.isVisible().catch(() => false));
+    } else {
+      await page.waitForTimeout(500);
+    }
   }
+  // 未点中（页面异常/按钮不存在）不抛错：走下方分类标签激活的降级路径，
+  // 由 ensureMonitoringConversation 的轮询兜底判定（找不到新 id 会 BLOCKED）。
   // Science42 新版首页 input 默认 disabled，点分类标签激活对话
   const input = page.locator(cfg.selectors.input).last();
   if (await input.isVisible().catch(() => false) && await input.isDisabled().catch(() => false)) {
