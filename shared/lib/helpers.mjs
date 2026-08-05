@@ -94,16 +94,30 @@ export async function ensureMonitoringConversation(page, title) {
   });
   const select = async () => {
     // 精确匹配标题：hasText 是子串匹配，「物理案例-1」会命中「物理案例-10/12」等。
-    const items = page.locator('[class*="chat-item"]');
-    for (let index = 0; index < await items.count(); index += 1) {
-      const item = items.nth(index);
-      const itemTitle = (await item.getAttribute('title').catch(() => '')) || (await item.innerText().catch(() => '')).trim();
-      if (itemTitle === title) {
-        await item.click();
-        await expect(page.locator(cfg.selectors.input).last()).toBeVisible({ timeout: 15_000 });
-        await activateChatInput(page);
-        return true;
+    // 会话列表懒加载（recent-list 滚动加载更多，实测初始仅渲染前 ~20 个会话）：
+    // 槽位会话（物理案例-N）可能排在列表深处（API 第 20+ 位），不滚动永远找不到。
+    // 每轮遍历未命中 → 滚动列表容器触底加载 → 重试，最多 10 轮（~20s）。
+    const listSelector = '[class*="recent-list"], [class*="chat-list"]';
+    for (let round = 0; round < 10; round += 1) {
+      const items = page.locator('[class*="chat-item"]');
+      for (let index = 0; index < await items.count(); index += 1) {
+        const item = items.nth(index);
+        const itemTitle = (await item.getAttribute('title').catch(() => '')) || (await item.innerText().catch(() => '')).trim();
+        if (itemTitle === title) {
+          await item.click();
+          await expect(page.locator(cfg.selectors.input).last()).toBeVisible({ timeout: 15_000 });
+          await activateChatInput(page);
+          return true;
+        }
       }
+      const before = await items.count();
+      await page.evaluate((selector) => {
+        const lists = document.querySelectorAll(selector);
+        for (const list of lists) list.scrollTop = list.scrollHeight;
+      }, listSelector);
+      await page.waitForTimeout(1_500);
+      // 列表没有更多可加载（数量不再增长）→ 目标确实不在列表中。
+      if ((await items.count()) <= before) break;
     }
     // 当前本地 XIMU 的 /#/chat 会重定向到首页工作台；该视图没有历史会话列表。
     // 此时不能把「列表不可见」当成案例执行失败，继续使用已恢复的浏览器会话状态即可。
