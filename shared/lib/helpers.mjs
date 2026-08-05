@@ -148,31 +148,49 @@ export async function ensureMonitoringConversation(page, title) {
   throw new Error(`监控会话「${title}」创建后标题确认失败（可能被并发进程改名）`);
 }
 
-async function assistantSnapshot(page) {
+/**
+ * 发送后新增消息的噪音文本（渲染装饰/占位），剥离后若为空说明仍在生成。
+ * - 「秋月白为您服务~」：产品端欢迎语占位（先出，正文后写）
+ * - 重试/删除/复制/收藏：消息操作按钮（虚拟列表重渲染时可能混入 innerText）
+ * - 时间戳（`8/5/2026, 10:19:19 AM` 与 ISO 两种形态）：消息元信息
+ * - 生成中/Generating：流式生成状态
+ */
+const NOISE_RE = /秋月白为您服务~|重试|删除|复制|收藏|生成中|Generating|\d{1,2}\/\d{1,2}\/\d{4},\s*\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/gi;
+
+/** 剥离渲染噪音后是否仍有实质回答内容。 */
+function hasMeaningfulContent(text) {
+  return text.replace(NOISE_RE, '').trim().length > 0;
+}
+
+/**
+ * 当前所有 assistant 消息的 id 集合（只按 id 识别新旧，不比较文本：
+ * 虚拟列表重渲染会让历史消息 innerText 抖动，id+text 组合去重会把
+ * 抖动后的历史消息误判为"新消息"，导致稳定轮次被反复重置而超时）。
+ */
+async function assistantMessageIds(page) {
   const messages = page.locator('[data-role="assistant"]');
-  const snapshot = new Set();
+  const ids = new Set();
   for (let index = 0; index < await messages.count(); index += 1) {
     const message = messages.nth(index);
     const content = message.locator('[data-message-id]').last();
     const id = await content.getAttribute('data-message-id').catch(() => null);
-    const text = ((await content.innerText().catch(() => '')) || await message.innerText().catch(() => '')).trim();
-    snapshot.add(`${id || index}\u0000${text}`);
+    if (id) ids.add(id);
   }
-  return snapshot;
+  return ids;
 }
 
 export async function sendAndMeasure(page, question) {
   const input = page.locator(cfg.selectors.input).last();
   await expect(input).toBeVisible();
   await expect(input).toBeEnabled({ timeout: 15_000 });
-  const before = await assistantSnapshot(page);
+  const beforeIds = await assistantMessageIds(page);
   const started = Date.now();
   await input.fill(question);
   await input.press('Enter');
   let firstMs = null;
   let finalText = '';
-  let previousSignature = '';
-  let stableRounds = 0;
+  // 每条发送后新增的消息独立追踪稳定轮次：id → { text, stableRounds }
+  const candidates = new Map();
   const deadline = Date.now() + cfg.maxTaskMs;
   while (Date.now() < deadline) {
     const messages = page.locator('[data-role="assistant"]');
@@ -180,15 +198,23 @@ export async function sendAndMeasure(page, question) {
       const message = messages.nth(index);
       const content = message.locator('[data-message-id]').last();
       const id = await content.getAttribute('data-message-id').catch(() => null);
+      // 只接受发送后新增的消息 id；历史消息（含文本抖动）一律忽略。
+      if (!id || beforeIds.has(id)) continue;
       const text = ((await content.innerText().catch(() => '')) || await message.innerText().catch(() => '')).trim();
-      if (!text || before.has(`${id || index}\u0000${text}`)) continue;
+      if (!text) continue; // 空内容：占位/仍在生成，跳过
       if (firstMs === null) firstMs = Date.now() - started;
       finalText = text;
-      const signature = `${id || index}\u0000${text}`;
-      stableRounds = signature === previousSignature ? stableRounds + 1 : 0;
-      previousSignature = signature;
-      // 只接受发送后新增/更新的 assistant 消息；连续两轮稳定且不在生成中才视为本次回答完成。
-      if (!/生成中|Generating/i.test(text) && stableRounds >= 2) {
+      const entry = candidates.get(id);
+      if (entry && entry.text === text) {
+        entry.stableRounds += 1;
+      } else {
+        candidates.set(id, { text, stableRounds: 1 });
+      }
+      // 完成判定：同一消息文本连续 3 轮稳定（1.5s）、不在生成中、且剥离渲染噪音后仍有实质内容。
+      // 仅欢迎语/按钮/时间戳不算完成，避免把占位消息误判为回答（假通过）。
+      if (candidates.get(id).stableRounds >= 3
+        && !/生成中|Generating/i.test(text)
+        && hasMeaningfulContent(text)) {
         const failed = /失败|错误|超时|failed/i.test(text);
         return {
           question,
