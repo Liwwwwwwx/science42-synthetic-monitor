@@ -491,19 +491,24 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
 
   const results = [];
   if (!selected || !cardsReady || titles.length === 0) {
+    const blockedReason = prepareError
+      ? `前置准备异常：${prepareError}`
+      : navigationError
+        ? `聊天页加载失败：${navigationError}`
+        : selected && !panelExpanded
+          ? '分类已选择，但案例面板无法展开'
+          : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`;
     results.push({
       category: CATEGORY,
       title: '',
       status: 'BLOCKED',
-      reason: prepareError
-        ? `前置准备异常：${prepareError}`
-        : navigationError
-          ? `聊天页加载失败：${navigationError}`
-          : selected && !panelExpanded
-            ? '分类已选择，但案例面板无法展开'
-            : selected ? '分类已选择，但案例卡片在前置加载时限内未就绪' : `未找到“${CATEGORY_LABEL}”分类入口`,
+      reason: blockedReason,
       ...(await collectOutput(page))
     });
+    // BLOCKED 也必须输出标准结算行（带 reason）：
+    // run-cases.mjs 从 `[case 1/1]` 行解析状态与原因，缺行时结算行退化为
+    // `→ FAILED`（原因丢失），后端任务日志弹窗只见 FAILED 无失败原因。
+    console.log(`[case 1/1] 未执行 - BLOCKED (0 ms)${blockedReason ? ` reason=${blockedReason}` : ''}`);
   }
 
   for (let index = 0; selected && cardsReady && index < titles.length; index += 1) {
