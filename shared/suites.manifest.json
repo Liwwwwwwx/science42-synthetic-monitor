@@ -36,7 +36,7 @@
       "path": "suites/batch-cases",
       "npm": "test:batch-cases",
       "reportsToBackend": "ready",
-      "summary": "物理求解案例：按分类批量点 Run，验收 Step 1-6 流程、代码块、PNG 产物与执行完成"
+      "summary": "物理求解案例：管理端批量运行默认走 WebSocket 业务链路，验收 Step 1-6、PNG 产物与完成；Playwright 路径保留用于页面 Run/UI 冒烟"
     },
     {
       "id": "data_cases",
@@ -45,7 +45,7 @@
       "path": "suites/batch-cases",
       "npm": "test:batch-cases",
       "reportsToBackend": "ready",
-      "summary": "数据建模案例（dataAnalytics）：CAD 组装与三维网格任务，验收 CAD 流程文案与 STL 文件产物"
+      "summary": "数据建模案例（dataAnalytics）：管理端批量运行默认走 WebSocket，验收 CAD 流程文案与 STL 文件产物；页面 UI 冒烟独立保留"
     },
     {
       "id": "material_cases",
@@ -54,7 +54,7 @@
       "path": "suites/batch-cases",
       "npm": "test:batch-cases",
       "reportsToBackend": "ready",
-      "summary": "材料计算案例（category=model + waterlily）：按双 Profile 验收（检索综合型：中文检索项+检索进度+综合回答；文本分析型：材料分析章节+追问推荐），处理追问与补充对话框"
+      "summary": "材料计算案例：管理端批量运行默认走 WebSocket，按双 Profile 验收；Playwright 路径保留处理页面「追问与补充」等 UI 交互"
     },
     {
       "id": "team_api",

@@ -23,15 +23,20 @@ npm run test:basic           # 基础功能全量（登录态+10题冒烟+30轮�
 npm run test:case-catalog
 npm run test:markdown
 
-# 研发案例批量（物理/数学/材料）
+# 页面 UI 批量回归（Playwright；保留验证卡片、按钮与渲染）
 CASE_LIMIT=1 npm run test:batch-cases
 CASE_LIMIT=0 npm run test:batch-all
 npm run run:cases -- --category=physics --indices=1,2,3,4,5
 
+# 长期业务轮询（默认推荐；不启动 Chromium）
+npm run run:cases-ws -- --category=physics --indices=1,2,3 --parallel=3
+npm run run:cases-ws -- --category=data --indices=1 --parallel=1
+npm run run:cases-ws -- --category=material --indices=1 --parallel=1
+
 npm run probe:team-api
 ```
 
-物理求解案例会额外校验 Step 1–6、Step 5/6 代码块、PNG 产物、案例关键字和“执行完成”；数据建模校验 CAD 组装流程文案与 STL 文件产物；材料计算按真实 Run 定标的双 Profile 验收：检索综合型（中文检索项+检索进度+综合回答）与文本分析型（材料分析章节+追问推荐），并处理「追问与补充」对话框（默认选停 止）。
+`run:cases-ws` 复用聊天页案例卡的 `prompt`、`team_type`、`pde_image_para` 与文件元数据契约，按 `client_message_id` 回查持久化回答；每个并发槽使用不同会话。物理求解校验 Step 1–6、PNG 与完成；数据建模校验 CAD 流程与 STL；材料计算校验检索综合型或文本分析型 Profile。复杂页面交互（例如「追问与补充」）继续由 Playwright 路径覆盖。
 
 ## 结果
 
