@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { checkKey, finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs';
@@ -30,10 +31,6 @@ const CATEGORY_LABEL = {
   data: '数据建模'
 }[CATEGORY] || '物理求解';
 const IS_PHYSICS_CASE = CATEGORY === 'physics';
-// 会话池：同账号并发时每个案例占用一个专用会话，避免在同一会话内互相串扰。
-// 槽位由 run-cases.mjs 按 --pool=N 计算（--pool 默认 3，即产品端实测并发容量），经环境变量传入。
-const CONVERSATION_SLOT = Number(process.env.CASE_CONVERSATION_SLOT || 0);
-const CONVERSATION_PREFIX = { physics: '物理案例', math: '数学案例', material: '材料案例', data: '数据案例' }[CATEGORY] || '物理案例';
 const IS_DATA_CASE = CATEGORY === 'data';
 const IS_MATERIAL_CASE = CATEGORY === 'material';
 
@@ -229,9 +226,31 @@ async function latestNewAssistant(page, beforeSnapshot) {
     if (!normalizedText || beforeSnapshot.has(`${id || index}\u0000${normalizedText}`)) continue;
     // 初始欢迎语不是本次案例输出。
     if (isInitialAssistantGreeting(normalizedText)) continue;
-    return { message, content, text: normalizedText, count: await messages.count() };
+    return { message, content, id: id || null, text: normalizedText, count: await messages.count() };
   }
   return null;
+}
+
+/**
+ * 预览脚本比较的是产品库原始 message.content，不能用 DOM innerText 生成指纹：
+ * Markdown/HTML 在浏览器中的归一化会导致未变化的回答被误判为已变化。
+ */
+async function readPersistedAssistantContent(page, conversationId, assistantMessageId) {
+  if (!conversationId || !assistantMessageId) return null;
+  return page.evaluate(async ({ conversationId: id, assistantMessageId: messageId }) => {
+    const response = await fetch(`/api/conversation/conversations/${encodeURIComponent(id)}/messages`, {
+      credentials: 'include',
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    const messages = Array.isArray(body)
+      ? body
+      : body?.data?.messages || body?.messages || body?.data?.items || body?.items || [];
+    const message = Array.isArray(messages)
+      ? messages.find((item) => String(item?.id || item?.message_id || item?.messageId || item?.external_id || item?.externalId || '') === messageId)
+      : null;
+    return typeof message?.content === 'string' ? message.content.trim() : null;
+  }, { conversationId, assistantMessageId }).catch(() => null);
 }
 
 async function chooseCategory(page, timeoutMs) {
@@ -454,6 +473,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
   // The production SPA can keep background resources open indefinitely.
   // The test only needs the initial DOM, not the browser's full load event.
   let navigationError = '';
+  let monitoringConversationId = null;
   try {
     await page.goto(CHAT_PATH, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
   } catch (error) {
@@ -463,26 +483,11 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     try {
       // 会话按分类隔离：数据建模任务（CAD 装配/网格）与物理案例混用同一会话时，
       // 失败历史会残留并让服务端直接拒绝下一轮 Run。
-      // 并发时（CASE_CONVERSATION_SLOT>0）改用槽位专用会话（物理案例-N/数据案例-N），
-      // 每个并发案例独占一个会话，互不串扰；切换失败则整卡 BLOCKED，不静默回退共用会话。
       // 材料计算也使用独立会话：与物理案例混用会让物理历史（如 Step 文案）污染材料验收，
       // 且失败历史残留会拒绝下一轮 Run。
-      const conversationTitle = CONVERSATION_SLOT > 0
-        ? `${CONVERSATION_PREFIX}-${CONVERSATION_SLOT}`
-        : (IS_DATA_CASE ? '【自动化测试】数据建模' : IS_MATERIAL_CASE ? '【自动化测试】材料计算' : '【自动化测试】物理案例');
+      const conversationTitle = IS_DATA_CASE ? '【自动化测试】数据建模' : IS_MATERIAL_CASE ? '【自动化测试】材料计算' : '【自动化测试】物理案例';
       const conversation = await ensureMonitoringConversation(page, conversationTitle);
-      // 并发池模式（槽位会话）：既未新建也未选中目标会话时，说明列表不可见且当前不在目标会话，
-      // 两个并发进程可能静默落到同一会话，池隔离失效。轮询等待列表渲染后重试，仍失败 → 整卡 BLOCKED。
-      if (CONVERSATION_SLOT > 0 && !conversation.created && !conversation.selected) {
-        const listDeadline = Date.now() + 15_000;
-        let confirmed = false;
-        while (Date.now() < listDeadline && !confirmed) {
-          await page.waitForTimeout(1_000);
-          const retry = await ensureMonitoringConversation(page, conversationTitle);
-          confirmed = retry.created || retry.selected;
-        }
-        if (!confirmed) throw new Error(`专用会话「${conversationTitle}」列表不可见且无法选中`);
-      }
+      monitoringConversationId = conversation.conversationId || null;
     } catch (error) {
       navigationError = `${CATEGORY_LABEL}专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -576,7 +581,17 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       inputs: [],
       output: '',
       pageTail: '',
-      reason: ''
+      reason: '',
+      sourceRef: monitoringConversationId ? {
+        version: 1,
+        conversationId: monitoringConversationId,
+        clientMessageId: null,
+        assistantMessageId: null,
+        contentSha256: null,
+        contentLength: 0,
+        capturedAt: new Date().toISOString(),
+        executionMode: 'playwright',
+      } : null,
     };
     const started = Date.now();
     try {
@@ -839,6 +854,25 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             }
           }
           result.assistantText = assistantText.slice(-12_000);
+          if (monitoringConversationId) {
+            const persistedAssistantContent = await readPersistedAssistantContent(
+              page,
+              monitoringConversationId,
+              assistant?.id || null,
+            );
+            result.sourceRef = {
+              version: 1,
+              conversationId: monitoringConversationId,
+              clientMessageId: null,
+              assistantMessageId: assistant?.id || null,
+              contentSha256: persistedAssistantContent
+                ? crypto.createHash('sha256').update(persistedAssistantContent).digest('hex')
+                : null,
+              contentLength: persistedAssistantContent?.length || 0,
+              capturedAt: new Date().toISOString(),
+              executionMode: 'playwright',
+            };
+          }
 
           // 深度物理验收只看本次新增 assistant 消息，绝不把案例卡自身图片算作任务产物。
           if (IS_PHYSICS_CASE && assistant && !pngSeen) {
@@ -1089,6 +1123,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     result.finishedAt = new Date().toISOString();
     results.push(result);
     console.log(`[case ${index + 1}/${titles.length}] ${title} - ${result.status} (${result.durationMs} ms)${result.reason ? ` reason=${result.reason}` : ''}`);
+    if (result.sourceRef) console.log(`__CASE_UI_RESULT__${JSON.stringify({ position: CASE_CATALOG_INDEX || index + 1, sourceRef: result.sourceRef })}`);
   }
 
   const report = {

@@ -152,8 +152,9 @@ export async function ensureMonitoringConversation(page, title) {
   // 各自 rename 成自己的槽位标题（beforeIds 不含对方刚建的会话）。
   // 因此改名后二次确认标题存在；被并发进程改名则重试一次完整流程。
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if ((await conversations()).some((item) => item.title === title)) {
-      return { created: false, selected: await select() };
+    const existing = (await conversations()).find((item) => item.title === title);
+    if (existing) {
+      return { created: false, selected: await select(), conversationId: existing.id };
     }
     const beforeIds = new Set((await conversations()).map((item) => item.id));
     await newConversation(page);
@@ -179,7 +180,7 @@ export async function ensureMonitoringConversation(page, title) {
       if (!response.ok) throw new Error(`conversation title HTTP ${response.status}`);
     }, { conversationId: createdId, conversationTitle: title });
     if ((await conversations()).some((item) => item.title === title)) {
-      return { created: true, selected: await select() };
+      return { created: true, selected: await select(), conversationId: createdId };
     }
     // 标题未确认（可能被并发进程改名）：重试一次完整创建流程。
   }

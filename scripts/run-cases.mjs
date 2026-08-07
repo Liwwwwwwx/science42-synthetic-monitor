@@ -17,14 +17,6 @@ const opt = (name, def) => {
 };
 const CATEGORY = opt('category', 'physics').toLowerCase();
 const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
-// 并发通过会话池隔离：每案例占用一个专用会话（--pool=N 槽位，默认 3），
-// 实测同账号不同会话的任务可并行（3 任务同时通过）；同一会话并发会互相串扰
-//（消息流/面板状态竞争）。产品端单账号并发容量实测上限 3，>3 会过载失败（SERVICE_DOWN/排队超时）。
-const PARALLEL = Math.min(Math.max(Number(opt('parallel', 1)) || 1, 1), 3);
-// 会话池大小：并发时案例按顺序取槽位独占会话；串行时轮训。上限即产品端实测并发容量 3。
-const POOL = Math.min(Math.max(Number(opt('pool', 3)) || 1, 1), 3);
-// 池必须不小于并发数：并发=池上限时全部案例同时启动，槽位不足会重复（会话冲突）。
-const effectivePool = Math.max(POOL, PARALLEL);
 // 默认超时按分类区分：数据建模（CAD 装配/三维网格）任务实测正常完成需 5-10 分钟，
 // 300s 通用预算会截断仍在执行的正常任务；physics/math/material 保持 300s。
 const DEFAULT_TIMEOUT_MS = CATEGORY === 'data' ? 660_000 : 300_000;
@@ -90,7 +82,7 @@ if (DRY || selections.length === 0) {
 }
 
 // ── 2. 并行执行：每案例一个独立进程 ───────────────────────────
-console.log(`[2/3] 串行跑 ${selections.length} 个案例（并发 ${Math.min(PARALLEL, selections.length)}）…`);
+console.log(`[2/3] 串行跑 ${selections.length} 个案例…`);
 const results = [];
 const children = new Set();
 let cursor = 0;
@@ -105,10 +97,8 @@ function startOne() {
   const selection = selections[cursor++];
   const { title, position } = selection;
   const id = nextId++;
-  // 会话池槽位：按案例启动顺序轮换（1..effectivePool），并发时同一时刻运行中的案例槽位互不重复。
-  const slot = (id % effectivePool) + 1;
   running++;
-  console.log(`[run ${id + 1}] ${title} 启动${PARALLEL > 1 ? `（会话 ${slot}）` : ''}`);
+  console.log(`[run ${id + 1}] ${title} 启动`);
   const child = spawn(
     'npx', ['playwright', 'test', 'suites/batch-cases', '--project=chromium', '--workers=1'],
     {
@@ -118,8 +108,7 @@ function startOne() {
         CASE_TITLE: title,
         CASE_CATALOG_INDEX: String(position),
         CASE_RUN_TIMEOUT_MS: String(RUN_TIMEOUT_MS),
-        CASE_CONVERSATION_SLOT: String(slot),
-        // 每个子进程独立 json 报告文件，避免并发写同一文件互相覆盖（playwright.config.mjs 读取）。
+        // 每次仅运行一个子进程，仍按案例写独立报告，方便排障和历史对照。
         PLAYWRIGHT_JSON_REPORT: path.join('results', `playwright-results-${CATEGORY}-${position}-${id}.json`),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -138,10 +127,12 @@ function startOne() {
     running--;
     const status = code === 0 ? 'PASSED' : 'FAILED';
     const line = output.split('\n').find((l) => l.includes(`[case 1/1]`)) || '';
+    const uiDiagnostic = output.split('\n').find((l) => l.startsWith('__CASE_UI_RESULT__')) || '';
     const m = /- (PASSED|FAILED|TIMEOUT|BLOCKED|DISCOVERED) \((\d+) ms\)/.exec(line);
     const reason = detail || (/\sreason=(.+)$/.exec(line)?.[1]?.trim() || '');
     results.push({ position, title, status, code, durationMs: m ? Number(m[2]) : null, detail: reason || (m ? m[1] : status) });
     console.log(`[run ${id + 1}] #${position} ${title} → ${reason || (m ? m[1] : status)}${m ? ` (${(m[2] / 1000).toFixed(0)}s)` : ''}`);
+    if (uiDiagnostic) console.log(uiDiagnostic);
     startOne();
   };
   child.on('close', (code) => settle(code === null ? -1 : code));
@@ -156,8 +147,7 @@ function startOne() {
   watchdog.unref();
 }
 
-const concurrency = Math.min(PARALLEL, selections.length);
-for (let i = 0; i < concurrency; i++) startOne();
+startOne();
 
 await new Promise((resolve) => {
   const timer = setInterval(() => { if (running === 0 && cursor >= selections.length) { clearInterval(timer); resolve(); } }, 1000);
@@ -181,8 +171,7 @@ try {
   writeFileSync(summaryFile, JSON.stringify({
     capturedAt: new Date().toISOString(),
     category: CATEGORY,
-    parallel: PARALLEL,
-    pool: POOL,
+    executionMode: 'sequential',
     passed: results.length - failed.length,
     total: results.length,
     results: ordered,

@@ -13,6 +13,7 @@
     "test:case": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
     "run:cases": "node scripts/run-cases.mjs",
     "run:cases-ws": "node --env-file=.env scripts/run-cases-ws.mjs",
+    "preview:case-output": "node scripts/read-case-output.mjs",
     "test:quick": "node scripts/run-quick-suites.mjs",
     "test:batch-all": "node --env-file=.env suites/batch-cases/run-all-case-categories.mjs",
     "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs",

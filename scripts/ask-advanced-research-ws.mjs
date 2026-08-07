@@ -9,6 +9,7 @@ import process from 'node:process';
 import crypto from 'node:crypto';
 import { getResearchQuestion } from '../shared/config/research-questions.mjs';
 import { getTargetUrl } from '../shared/config/project.mjs';
+import { isAutomaticReloginAllowed, loadReusableWsAuth } from '../shared/auth/reusable-ws-auth.mjs';
 
 const ANSWER_TIMEOUT_MS = Number(process.env.WS_ANSWER_TIMEOUT_MS || 15 * 60 * 1000);
 const PERSISTENCE_TIMEOUT_MS = Number(process.env.WS_PERSISTENCE_TIMEOUT_MS || 60_000);
@@ -78,7 +79,7 @@ async function loadJob() {
   return { ...question, questionId: question.id };
 }
 
-async function authenticate(baseUrl) {
+async function loginWithPassword(baseUrl) {
   if (!process.env.SCIENCE42_USER || !process.env.SCIENCE42_PASSWORD) {
     throw new Error('缺少 SCIENCE42_USER/SCIENCE42_PASSWORD');
   }
@@ -90,7 +91,16 @@ async function authenticate(baseUrl) {
   const token = findString(login, ['token', 'access_token', 'accessToken']);
   const userName = findString(login, ['user_name', 'username', 'userName', 'account_name', 'account']);
   if (!token || !userName) throw new Error('测试账号登录响应缺少 token 或 user_name');
-  return { token, userName };
+  return { token, userName, source: 'password-login' };
+}
+
+async function authenticate(baseUrl) {
+  const reusable = await loadReusableWsAuth(baseUrl);
+  if (reusable) return reusable;
+  if (!isAutomaticReloginAllowed()) {
+    throw new Error('未找到可复用测试登录态：请配置 SCIENCE42_TOKEN/SCIENCE42_USER_NAME，或先执行一次 npm run auth:setup；如明确允许自动重登，设置 SCIENCE42_ALLOW_RELOGIN=true');
+  }
+  return loginWithPassword(baseUrl);
 }
 
 async function resolveConversation(baseUrl, token) {
