@@ -51,15 +51,24 @@ export async function newConversation(page) {
   // chromium、页面渲染慢，goto 后立即检查 isVisible 会拿到 false → 跳过点击 →
   // 消息发到当前旧会话 → 无新会话创建 → ensureMonitoringConversation 轮询
   // 找不到新 conversation id → 整卡 BLOCKED（2026-08-05 服务器并发实测）。
-  let clicked = false;
+  let clickIssued = false;
+  let ready = false;
   const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline && !clicked) {
-    if (await newChat.isVisible().catch(() => false)) {
-      await newChat.click().catch(() => {});
+  while (Date.now() < deadline && !ready) {
+    if (!clickIssued && await newChat.isVisible().catch(() => false)) {
+      try {
+        await newChat.click();
+        clickIssued = true;
+      } catch {
+        await page.waitForTimeout(500);
+        continue;
+      }
+    }
+    if (clickIssued) {
       await page.waitForTimeout(800);
       const input = page.locator(cfg.selectors.input).last();
       // 点击生效的标志：输入框存在且可见（新会话视图渲染完成）。
-      clicked = (await input.count()) > 0 && (await input.isVisible().catch(() => false));
+      ready = (await input.count()) > 0 && (await input.isVisible().catch(() => false));
     } else {
       await page.waitForTimeout(500);
     }
@@ -143,8 +152,9 @@ export async function ensureMonitoringConversation(page, title) {
   // 各自 rename 成自己的槽位标题（beforeIds 不含对方刚建的会话）。
   // 因此改名后二次确认标题存在；被并发进程改名则重试一次完整流程。
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if ((await conversations()).some((item) => item.title === title)) {
-      return { created: false, selected: await select() };
+    const existing = (await conversations()).find((item) => item.title === title);
+    if (existing) {
+      return { created: false, selected: await select(), conversationId: existing.id };
     }
     const beforeIds = new Set((await conversations()).map((item) => item.id));
     await newConversation(page);
@@ -170,7 +180,7 @@ export async function ensureMonitoringConversation(page, title) {
       if (!response.ok) throw new Error(`conversation title HTTP ${response.status}`);
     }, { conversationId: createdId, conversationTitle: title });
     if ((await conversations()).some((item) => item.title === title)) {
-      return { created: true, selected: await select() };
+      return { created: true, selected: await select(), conversationId: createdId };
     }
     // 标题未确认（可能被并发进程改名）：重试一次完整创建流程。
   }

@@ -1,0 +1,840 @@
+{
+  "version": 1,
+  "generatedFrom": "XIMUFORSCIENCE action cards",
+  "categories": {
+    "physics": [
+      {
+        "position": 1,
+        "id": "equation-sim35",
+        "title": "CylinderFlowPINN：二维圆柱绕流瞬态流场",
+        "prompt": "CylinderFlowPINN：二维圆柱绕流瞬态流场",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "CylinderFlowPINN：二维圆柱绕流瞬态流场",
+          "path": "PINN4Science/Fluid_Mechanics/cylinder_flow",
+          "param": {
+            "n_boundary": "4096",
+            "alpha_evm": "0.03"
+          }
+        }
+      },
+      {
+        "position": 2,
+        "id": "equation-sim44",
+        "title": "机器人关节电机散热",
+        "prompt": "机器人关节电机散热",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "机器人关节电机散热",
+          "path": "PINN4Science/Thermodynamics/robotJoint",
+          "param": {
+            "material_density": "2700",
+            "specific_heat_capacity_of_materials": "897",
+            "thermal_conductivity_of_materials": "229",
+            "total_power": "3.5"
+          }
+        }
+      },
+      {
+        "position": 3,
+        "id": "equation-sim47",
+        "title": "基于STL几何约束与PINN的三维卫星弹性力学应力与位移预测",
+        "prompt": "基于STL几何约束与PINN的三维卫星弹性力学应力与位移预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于STL几何约束与PINN的三维卫星弹性力学应力与位移预测",
+          "path": "PINN4Science/Solid_Mechanics/stl_pinn_三维卫星",
+          "param": {
+            "PDE_Collocation_Points": "1024",
+            "Observed_Solution_Points": "64",
+            "Residual_Observation_Points": "512",
+            "Observation_Noise_Level": "0.01"
+          }
+        }
+      },
+      {
+        "position": 4,
+        "id": "equation-sim24",
+        "title": "基于点云的三维翼型弹性力学位移约束仿真求解",
+        "prompt": "基于点云的三维翼型弹性力学位移约束仿真求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于点云的三维翼型弹性力学位移约束仿真求解",
+          "path": "PINN4Science/Math_Physics_Formulations/bpinn3d_laplace",
+          "param": {
+            "PDE_Collocation_Points": "1024",
+            "Observed_Solution_Points": "64",
+            "Residual_Observation_Points": "512",
+            "Observation_Noise_Level": "0.01"
+          }
+        }
+      },
+      {
+        "position": 5,
+        "id": "equation-sim2",
+        "title": "1U立方星多物理场（热-结构）耦合求解",
+        "prompt": "1U立方星多物理场（热-结构）耦合求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "1U立方星多物理场（热-结构）耦合求解",
+          "path": "PINN4Science/Thermodynamics/Multiphysics",
+          "param": {
+            "positionX": "0.22",
+            "positionY": "0.16",
+            "positionZ": "0.30",
+            "time": "0.89",
+            "temperature": "310.89"
+          }
+        }
+      },
+      {
+        "position": 6,
+        "id": "equation-sim7",
+        "title": "三维卫星弹性力学应力与位移预测",
+        "prompt": "三维卫星弹性力学应力与位移预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "三维卫星弹性力学应力与位移预测",
+          "path": "PINN4Science/Math_Physics_Formulations/bpinn3d_laplace",
+          "param": {
+            "E": "100",
+            "nu": "0.3"
+          }
+        }
+      },
+      {
+        "position": 7,
+        "id": "equation-sim3",
+        "title": "1U立方星材料属性参数反演",
+        "prompt": "1U立方星材料属性参数反演",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "1U立方星材料属性参数反演",
+          "path": "PINN4Science/Thermodynamics/Multiphysics_3",
+          "param": {
+            "alpha_t": "0.01",
+            "t_amb": "3.0",
+            "t_0": "273.0"
+          }
+        }
+      },
+      {
+        "position": 8,
+        "id": "equation-sim6",
+        "title": "AeroDiT：融合扩散与 Transformer 的高精度翼型流场仿真",
+        "prompt": "AeroDiT：融合扩散与 Transformer 的高精度翼型流场仿真",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "AeroDiT：融合扩散与 Transformer 的高精度翼型流场仿真",
+          "path": "PINN4Science/Space_Physics/DEV-DiT4Science",
+          "param": {
+            "ensure_simul_n": "2048",
+            "lr": "0.01"
+          }
+        }
+      },
+      {
+        "position": 9,
+        "id": "equation-sim37",
+        "title": "三维翼型结构力-位移混合约束仿真求解",
+        "prompt": "三维翼型结构力-位移混合约束仿真求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "三维翼型结构力-位移混合约束仿真求解",
+          "path": "PINN4Science/Solid_Mechanics/airfoil_force_pinn",
+          "param": {
+            "E": "100",
+            "nu": "0.3"
+          }
+        }
+      },
+      {
+        "position": 10,
+        "id": "equation-sim48",
+        "title": "基于STL几何约束与PINN的三维翼型弹性力学位移预测",
+        "prompt": "基于STL几何约束与PINN的三维翼型弹性力学位移预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于STL几何约束与PINN的三维翼型弹性力学位移预测",
+          "path": "PINN4Science/Solid_Mechanics/stl_pinn_airfoil三维翼型",
+          "param": {
+            "PDE_Collocation_Points": "1024",
+            "Observed_Solution_Points": "64",
+            "Residual_Observation_Points": "512",
+            "Observation_Noise_Level": "0.01"
+          }
+        }
+      },
+      {
+        "position": 11,
+        "id": "equation-sim13",
+        "title": "内孤立波KdV参数反演与分层识别",
+        "prompt": "内孤立波KdV参数反演与分层识别",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "内孤立波KdV参数反演与分层识别",
+          "path": "PINN4Science/Fluid_Mechanics/KDV算子学习",
+          "param": {
+            "number_of_data_samples": "100",
+            "number_of_spatial_points": "300"
+          }
+        }
+      },
+      {
+        "position": 12,
+        "id": "equation-sim40",
+        "title": "孤立波高速代理模型：面向 KdV 方程的参数扫描神经算子",
+        "prompt": "孤立波高速代理模型：面向 KdV 方程的参数扫描神经算子",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "孤立波高速代理模型：面向 KdV 方程的参数扫描神经算子",
+          "path": "PINN4Science/Fluid_Mechanics/KDV_Inverse_problem",
+          "param": {
+            "num_boundary": "80",
+            "x_dim": "256",
+            "t_dim": "201"
+          }
+        }
+      },
+      {
+        "position": 13,
+        "id": "equation-sim20",
+        "title": "PINN-RANS-EVM：基于简易代数涡粘模型的低雷诺数后向台阶流仿真",
+        "prompt": "PINN-RANS-EVM：基于简易代数涡粘模型的低雷诺数后向台阶流仿真",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "PINN-RANS-EVM：基于简易代数涡粘模型的低雷诺数后向台阶流仿真",
+          "path": "PINN4Science/Fluid_Mechanics/rans_backstep",
+          "param": {
+            "Number_of_collocation_points": "40000",
+            "Boundary_Condition_Points": "1000",
+            "Eddy_Viscosity_Model_Coefficient": "0.03",
+            "Turbulence_Scaling_Factor": "10"
+          }
+        }
+      },
+      {
+        "position": 14,
+        "id": "equation-sim27",
+        "title": "人工粘性项增强的混合对流传热求解",
+        "prompt": "人工粘性项增强的混合对流传热求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "人工粘性项增强的混合对流传热求解",
+          "path": "PINN4Science/Fluid_Mechanics/mixed_convection",
+          "param": {
+            "Number_of_PDE_Collocation_Points": "40000",
+            "Boundary_Condition_Points": "1000"
+          }
+        }
+      },
+      {
+        "position": 15,
+        "id": "equation-sim19",
+        "title": "PIKAN 模型驱动的方腔流场高精度求解",
+        "prompt": "PIKAN 模型驱动的方腔流场高精度求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "PIKAN 模型驱动的方腔流场高精度求解",
+          "path": "PINN4Science/Fluid_Mechanics/cavity_flow_PIKAN",
+          "param": {
+            "Number_of_collocation_points": "40000",
+            "Reynolds_number": "1000"
+          }
+        }
+      },
+      {
+        "position": 16,
+        "id": "equation-sim12",
+        "title": "基于PINN的固定翼飞行器六自由度气动建模",
+        "prompt": "基于PINN的固定翼飞行器六自由度气动建模",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于PINN的固定翼飞行器六自由度气动建模",
+          "path": "PINN4Science/Space_Physics/pinn_6dof_f16",
+          "param": {
+            "simulation_duration (seconds)": "20",
+            "simulation_integration_time_step (seconds)": "0.02",
+            "simulation_noise_intensity": "0.02"
+          }
+        }
+      },
+      {
+        "position": 17,
+        "id": "equation-sim34",
+        "title": "电网频率扰动传播建模",
+        "prompt": "电网频率扰动传播建模",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "电网频率扰动传播建模",
+          "path": "PINN4Science/PowerSystem/power_system_PINN",
+          "param": {
+            "M": "6.0",
+            "X_line": "0.1",
+            "node_spacing": "100.0"
+          }
+        }
+      },
+      {
+        "position": 18,
+        "id": "equation-sim29",
+        "title": "微悬臂梁谐振器：基于 PINN 的结构几何参数逆向反演",
+        "prompt": "微悬臂梁谐振器：基于 PINN 的结构几何参数逆向反演",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "微悬臂梁谐振器：基于 PINN 的结构几何参数逆向反演",
+          "path": "PINN4Science/MEMS/微悬臂梁谐振器_几何参数wtlt反演",
+          "param": {
+            "Number_of_PDE_Collocation_Points": "40000",
+            "Boundary_Condition_Points": "1000"
+          }
+        }
+      },
+      {
+        "position": 19,
+        "id": "equation-sim1",
+        "title": "raptor3发动机反应流模拟和推力计算",
+        "prompt": "raptor3发动机反应流模拟和推力计算",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "raptor3发动机反应流模拟和推力计算",
+          "path": "PINN4Science/Fluid_Mechanics/uniform_raptor3",
+          "param": {
+            "M_CH4": "170.0",
+            "M_LOX": "630.0",
+            "M_TOTAL": "800.0"
+          }
+        }
+      },
+      {
+        "position": 20,
+        "id": "equation-sim42",
+        "title": "1U立方星单场瞬态热仿真",
+        "prompt": "1U立方星单场瞬态热仿真",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "1U立方星单场瞬态热仿真",
+          "path": "PINN4Science/Thermodynamics/Multiphysics_1",
+          "param": {
+            "t_amb": "3.0",
+            "t_0": "273.0",
+            "q_sum": "400.0"
+          }
+        }
+      },
+      {
+        "position": 21,
+        "id": "equation-sim31",
+        "title": "基于 PINN 的电子设备跌落冲击力学应力预测",
+        "prompt": "基于 PINN 的电子设备跌落冲击力学应力预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于 PINN 的电子设备跌落冲击力学应力预测",
+          "path": "PINN4Science/Solid_Mechanics/Smartphone_DropImpact_PINN",
+          "param": {
+            "number_of_time_samples": "80",
+            "minimum_time_threshold": "0.0005"
+          }
+        }
+      },
+      {
+        "position": 22,
+        "id": "equation-sim32",
+        "title": "电子芯片散热分析：基于 PINN 的二维瞬态热传导建模求解",
+        "prompt": "电子芯片散热分析：基于 PINN 的二维瞬态热传导建模求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "电子芯片散热分析：基于 PINN 的二维瞬态热传导建模求解",
+          "path": "PINN4Science/Thermodynamics/Phone2D_HeatPINN",
+          "param": {
+            "Colormap_max": "325",
+            "Colormap_min": "300"
+          }
+        }
+      },
+      {
+        "position": 23,
+        "id": "equation-sim10",
+        "title": "二维波动方程：物理信息神经网络高精度求解",
+        "prompt": "二维波动方程：物理信息神经网络高精度求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "二维波动方程：物理信息神经网络高精度求解",
+          "path": "PINN4Science/Math_Physics_Formulations/2D_波动方程",
+          "param": {
+            "total_simulation_time": "1",
+            "number_of_discretized_spatial_partitions": "30"
+          }
+        }
+      },
+      {
+        "position": 24,
+        "id": "equation-sim17",
+        "title": "基于 PINNs 的电磁场关键参数定量反演",
+        "prompt": "基于 PINNs 的电磁场关键参数定量反演",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于 PINNs 的电磁场关键参数定量反演",
+          "path": "PINN4Science/Electromagnetism/PINNrever",
+          "param": {
+            "Number_of_sampling_points": "100",
+            "Hidden_layer_width": "50"
+          }
+        }
+      },
+      {
+        "position": 25,
+        "id": "equation-sim33",
+        "title": "XPINN：基于子域分解的高维非线性偏微分方程物理建模求解",
+        "prompt": "XPINN：基于子域分解的高维非线性偏微分方程物理建模求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "XPINN：基于子域分解的高维非线性偏微分方程物理建模求解",
+          "path": "PINN4Science/Variant_PINNs/XPINN",
+          "param": {
+            "Grid_Resolution": "50",
+            "Region_Split_Threshold": "0.7"
+          }
+        }
+      },
+      {
+        "position": 26,
+        "id": "equation-sim18",
+        "title": "参数化 PINN：一维 Burgers 方程基函数预计算与在线求解",
+        "prompt": "参数化 PINN：一维 Burgers 方程基函数预计算与在线求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "参数化 PINN：一维 Burgers 方程基函数预计算与在线求解",
+          "path": "PINN4Science/Fluid_Mechanics/burgers_1d_solver",
+          "param": {
+            "Number_of_collocation_points": "100",
+            "Boundary_condition_points": "200",
+            "Initial_condition_points": "200"
+          }
+        }
+      },
+      {
+        "position": 27,
+        "id": "equation-sim11",
+        "title": "基于 PINN 的太阳风多要素时序动力学预测",
+        "prompt": "基于 PINN 的太阳风多要素时序动力学预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于 PINN 的太阳风多要素时序动力学预测",
+          "path": "PINN4Science/Space_Physics/Solar_Wind_Forecast",
+          "param": {
+            "synthetic_data_length(hours)": "5740",
+            "input_time_window_length": "24",
+            "prediction_lead_time (hours)": "12"
+          }
+        }
+      },
+      {
+        "position": 28,
+        "id": "equation-sim9",
+        "title": "地质地球化学元素异常分布智能生成系统",
+        "prompt": "地质地球化学元素异常分布智能生成系统",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "地质地球化学元素异常分布智能生成系统",
+          "path": "PINN4Science/Geology/geochatbot",
+          "param": {
+            "HIDDEN_DIM": "64",
+            "N_LAYERS": "4"
+          }
+        }
+      },
+      {
+        "position": 29,
+        "id": "equation-sim14",
+        "title": "HelmholtzPDE：基于 PINN 的任意维谐波波动亥姆霍兹方程建模求解",
+        "prompt": "HelmholtzPDE：基于 PINN 的任意维谐波波动亥姆霍兹方程建模求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "HelmholtzPDE：基于 PINN 的任意维谐波波动亥姆霍兹方程建模求解",
+          "path": "PINN4Science/Electromagnetism/2D_scattering_inverse",
+          "param": {
+            "Number_of_excitation_sources": "120",
+            "Number_of_observation_samples": "40",
+            "Number_of_collocation_points": "40"
+          }
+        }
+      },
+      {
+        "position": 30,
+        "id": "equation-sim15",
+        "title": "物理驱动混合模型的磁性目标磁矩定量求解",
+        "prompt": "物理驱动混合模型的磁性目标磁矩定量求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "物理驱动混合模型的磁性目标磁矩定量求解",
+          "path": "PINN4Science/Electromagnetism/HybridMagMomEstimator",
+          "param": {
+            "Number_of_discrete_magnetic_dipoles": "15",
+            "Target_body_length": "153",
+            "Target_body_transverse_dimension": "17"
+          }
+        }
+      },
+      {
+        "position": 31,
+        "id": "equation-sim16",
+        "title": "地质勘探场景下三维地层电阻参数反演系统",
+        "prompt": "地质勘探场景下三维地层电阻参数反演系统",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "地质勘探场景下三维地层电阻参数反演系统",
+          "path": "PINN4Science/Electromagnetism/InverseResistance",
+          "param": {
+            "2D_Number_of_PDE_collocation_points": "6000",
+            "3D_Number_of_PDE_collocation_points": "8000"
+          }
+        }
+      },
+      {
+        "position": 32,
+        "id": "equation-sim21",
+        "title": "基于 PyTorch 的地形地貌三维可视化建模工具",
+        "prompt": "基于 PyTorch 的地形地貌三维可视化建模工具",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于 PyTorch 的地形地貌三维可视化建模工具",
+          "path": "PINN4Science/Geology/terrain_topozeko",
+          "param": {
+            "Spatial_Resolution": "128",
+            "max_of_computational_domain": "3.14",
+            "min_of_computational_domain": "-3.14"
+          }
+        }
+      },
+      {
+        "position": 33,
+        "id": "equation-sim22",
+        "title": "区域降雪过程多物理场动力学模拟",
+        "prompt": "区域降雪过程多物理场动力学模拟",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "区域降雪过程多物理场动力学模拟",
+          "path": "PINN4Science/Geology/Beijing_Snowfall_PINN",
+          "param": {
+            "Maximum_Simulation_Time": "2.5",
+            "Diffusion_Coefficient": "0.02",
+            "Melting_Rate_Coefficient": "8"
+          }
+        }
+      },
+      {
+        "position": 34,
+        "id": "equation-sim23",
+        "title": "地形强迫机制下的降雨过程动力学预测",
+        "prompt": "地形强迫机制下的降雨过程动力学预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "地形强迫机制下的降雨过程动力学预测",
+          "path": "PINN4Science/Geology/geochatbot",
+          "param": {
+            "Maximum_Simulation_Time": "1",
+            "Diffusion_Coefficient": "0.03",
+            "Advection_Velocity_in_x-direction": "0.6",
+            "Advection_Velocity_in_y-direction": "0.6"
+          }
+        }
+      },
+      {
+        "position": 35,
+        "id": "equation-sim25",
+        "title": "MaxwellPDE：基于 PINN 的三维频域麦克斯韦方程组无网格求解",
+        "prompt": "MaxwellPDE：基于 PINN 的三维频域麦克斯韦方程组无网格求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "MaxwellPDE：基于 PINN 的三维频域麦克斯韦方程组无网格求解",
+          "path": "PINN4Science/Math_Physics_Formulations/MaxwellPDE",
+          "param": {
+            "Interior_Collocation_Points": "1500",
+            "Boundary_Condition_Points": "450"
+          }
+        }
+      },
+      {
+        "position": 36,
+        "id": "equation-sim26",
+        "title": "PINN-NavierCauchy：任意维线性弹性体应力平衡建模",
+        "prompt": "PINN-NavierCauchy：任意维线性弹性体应力平衡建模",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "PINN-NavierCauchy：任意维线性弹性体应力平衡建模",
+          "path": "PINN4Science/Math_Physics_Formulations/NavierCauchy",
+          "param": {
+            "Number_of_PDE_Collocation_Points": "200",
+            "Boundary_Condition_Points": "240"
+          }
+        }
+      },
+      {
+        "position": 37,
+        "id": "equation-sim28",
+        "title": "PINN-Vlasov：等离子体双流不稳定性建模",
+        "prompt": "PINN-Vlasov：等离子体双流不稳定性建模",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "PINN-Vlasov：等离子体双流不稳定性建模",
+          "path": "PINN4Science/Math_Physics_Formulations/Vlasov_Equation",
+          "param": {
+            "2d_Number_of_PDE_Collocation_Points": "6000",
+            "3d_Number_of_PDE_Collocation_Points": "8000"
+          }
+        }
+      },
+      {
+        "position": 38,
+        "id": "equation-sim30",
+        "title": "参数化 PINN：二维弹性力学基函数预计算与在线求解",
+        "prompt": "参数化 PINN：二维弹性力学基函数预计算与在线求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "参数化 PINN：二维弹性力学基函数预计算与在线求解",
+          "path": "PINN4Science/Solid_Mechanics/elasticity_basis_precompute_online_solver_2d",
+          "param": {
+            "Scaled_Young's_modulus": "4.0/3.0",
+            "Poisson's_ratio": "1.0/3.0"
+          }
+        }
+      },
+      {
+        "position": 39,
+        "id": "equation-sim39",
+        "title": "GNN4S：基于图神经网络的三维心血管血流建模",
+        "prompt": "GNN4S：基于图神经网络的三维心血管血流建模",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "GNN4S：基于图神经网络的三维心血管血流建模",
+          "path": "PINN4Science/Space_Physics/DEV-GNN4Science",
+          "param": {
+            "diffusion.time_step_num": "1000",
+            "data.noise_gamma": "1.0"
+          }
+        }
+      },
+      {
+        "position": 40,
+        "id": "equation-sim43",
+        "title": "基于PINN+MPC的机械臂控制",
+        "prompt": "基于PINN+MPC的机械臂控制",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "基于PINN+MPC的机械臂控制",
+          "path": "PINN4Science/Fluid_Mechanics/uniform_raptor3",
+          "param": {
+            "M_CH4": "2",
+            "M_LOX": "630.0",
+            "M_TOTAL": "800.0"
+          }
+        }
+      },
+      {
+        "position": 41,
+        "id": "equation-sim4",
+        "title": "嵌入式液冷芯片流固热耦合求解",
+        "prompt": "嵌入式液冷芯片流固热耦合求解",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "嵌入式液冷芯片流固热耦合求解",
+          "path": "PINN4Science/Space_Physics/DEV-DiT4Science",
+          "param": {
+            "length_of_microchannel": "72",
+            "width_of_microchannel": "36"
+          }
+        }
+      },
+      {
+        "position": 42,
+        "id": "equation-sim38",
+        "title": "ACDM：基于自回归条件扩散模型的二维翼型流动预测",
+        "prompt": "ACDM：基于自回归条件扩散模型的二维翼型流动预测",
+        "teamType": "physics_classical",
+        "fileMetadata": [],
+        "pdeImagePara": {
+          "type": "ACDM：基于自回归条件扩散模型的二维翼型流动预测",
+          "path": "PINN4Science/Space_Physics/DEV-ACDM4Science",
+          "param": {
+            "trainingNoise": "0.0",
+            "diffSteps": "20"
+          }
+        }
+      }
+    ],
+    "data": [
+      {
+        "position": 1,
+        "id": "nvidia-aviation-pipeline-flange",
+        "title": "航空管路法兰连接件 CAD 建模",
+        "prompt": "请帮我生成一个航空管路法兰连接件的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 2,
+        "id": "nvidia-pem-electrolyzer",
+        "title": "PEM 制氢电解槽堆三维网格可视化",
+        "prompt": "请帮我生成 PEM 制氢电解槽堆的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 3,
+        "id": "nvidia-naca-2415-airfoil",
+        "title": "NACA 2415 三维翼型 CAD 建模",
+        "prompt": "请帮我生成一个飞机 NACA 2415 翼型的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 4,
+        "id": "nvidia-cooled-turbine-blade",
+        "title": "冷却涡轮叶片三维网格生成与可视化",
+        "prompt": "请帮我生成冷却涡轮叶片，包含内部连续蛇形冷却通道和前缘气膜孔，并进行三维网格生成和可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 5,
+        "id": "nvidia-solar-heliostat",
+        "title": "塔式光热电站定日镜镜场",
+        "prompt": "请帮我生成塔式光热电站定日镜场的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 6,
+        "id": "nvidia-robotic-arm",
+        "title": "机械臂三维网格生成与可视化",
+        "prompt": "请帮我生成六轴机械臂的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 7,
+        "id": "nvidia-horizontal-wind-turbine",
+        "title": "水平轴风力机三维网格生成与可视化",
+        "prompt": "请帮我生成水平轴风力机的三维网格并可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 8,
+        "id": "bearing-assembly",
+        "title": "轴承座组件三维网格生成与可视化",
+        "prompt": "请帮我生成轴承座组件的三维网格生成与可视化。",
+        "teamType": "data",
+        "fileMetadata": []
+      },
+      {
+        "position": 9,
+        "id": "fuel-assembly-17x17",
+        "title": "核燃料组件棒束与定位格架三维网格及可视化",
+        "prompt": "请帮我生成核燃料组件棒束与定位格架的三维网格生成与可视化/建立一个压水堆17×17核燃料组件核心段三维CAD装配模型并生成三维网格。",
+        "teamType": "data",
+        "fileMetadata": []
+      }
+    ],
+    "material": [
+      {
+        "position": 1,
+        "id": "robot-joint-3d-printing-material",
+        "title": "机器人关节 3D 打印材料快速筛选",
+        "prompt": "请帮我筛选适用于机器人高散热关节的3D打印材料。",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 2,
+        "id": "embedded-microchannel-material",
+        "title": "内嵌式微流通道材料快速筛选",
+        "prompt": "请帮我筛选适用于高性能芯片内嵌式微流通道的材料。",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 3,
+        "id": "embedded-microchannel-coolant",
+        "title": "内嵌式微流道液冷工质快速筛选",
+        "prompt": "请帮我筛选适用于高热流密度芯片内嵌式微流道液冷的冷却工质。",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 4,
+        "id": "solid-electrolyte-green-battery",
+        "title": "针对环保电池的固态电解质的材料快速筛选",
+        "prompt": "请帮我筛选适用于环保电池的固态电解质材料",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 5,
+        "id": "ceramic-packaging-substrate",
+        "title": "高功率高性能陶瓷封装基板材料快速筛选",
+        "prompt": "请帮我筛选适用于高功率高可靠电子封装的陶瓷基板材料。",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 6,
+        "id": "glass-packaging-substrate",
+        "title": "高集成前沿芯片封装玻璃基板材料快速筛选",
+        "prompt": "请帮我筛选适用于高集成前沿芯片封装的玻璃基板材料。",
+        "teamType": "materials",
+        "fileMetadata": []
+      },
+      {
+        "position": 7,
+        "id": "pcb-resin-high-frequency",
+        "title": "多层高频低损耗的PCB树脂基板材料快速筛选",
+        "prompt": "请帮我筛选适用于多层高频低损耗PCB基板的树脂材料。",
+        "teamType": "materials",
+        "fileMetadata": []
+      }
+    ]
+  }
+}

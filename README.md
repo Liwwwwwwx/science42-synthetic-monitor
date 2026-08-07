@@ -10,7 +10,7 @@
 # 生产环境固定部署到 /data/science-admin/science42-synthetic-monitor
 npm install && npm run pw:install
 cp .env.example .env
-# 填 SCIENCE42_USER / SCIENCE42_PASSWORD
+# 优先配置 SCIENCE42_TOKEN / SCIENCE42_USER_NAME；首次建立 Playwright 登录态时才填写账号密码
 # 上报 Admin（可选，全项目一套）：ADMIN_URL / ADMIN_RUNNER_ID / ADMIN_RUNNER_TOKEN
 npm run auth:setup
 ```
@@ -23,15 +23,22 @@ npm run test:basic           # 基础功能全量（登录态+10题冒烟+30轮�
 npm run test:case-catalog
 npm run test:markdown
 
-# 研发案例批量（物理/数学/材料）
+# 页面 UI 批量回归（Playwright；保留验证卡片、按钮与渲染）
 CASE_LIMIT=1 npm run test:batch-cases
 CASE_LIMIT=0 npm run test:batch-all
 npm run run:cases -- --category=physics --indices=1,2,3,4,5
 
+# 长期业务轮询（默认推荐；不启动 Chromium）
+npm run run:cases-ws -- --category=physics --indices=1,2,3
+npm run run:cases-ws -- --category=data --indices=1
+npm run run:cases-ws -- --category=material --indices=1
+
 npm run probe:team-api
 ```
 
-物理求解案例会额外校验 Step 1–6、Step 5/6 代码块、PNG 产物、案例关键字和“执行完成”；数据建模校验 CAD 组装流程文案与 STL 文件产物；材料计算按真实 Run 定标的双 Profile 验收：检索综合型（中文检索项+检索进度+综合回答）与文本分析型（材料分析章节+追问推荐），并处理「追问与补充」对话框（默认选停 止）。
+`run:cases-ws` 复用聊天页案例卡的 `prompt`、`team_type`、`pde_image_para` 与文件元数据契约，按 `client_message_id` 回查持久化回答；所有案例按选中顺序串行执行。物理求解校验 Step 1–6、PNG 与完成；数据建模校验 CAD 流程与 STL；材料计算校验检索综合型或文本分析型 Profile。复杂页面交互（例如「追问与补充」）继续由 Playwright 路径覆盖。
+
+WebSocket Runner 会优先复用私有环境变量 `SCIENCE42_TOKEN` / `SCIENCE42_USER_NAME`，其次复用 `auth:setup` 保存的 Playwright 登录态；两者都不会重新登录。token 失效时会明确报错，默认不自动登录，以免挤掉正在使用同一账号的浏览器会话。Playwright 也会持续复用 `SCIENCE42_STORAGE_STATE`，因此滑块只需在首次建立或登录态真正过期后手动完成一次。
 
 ## 结果
 
