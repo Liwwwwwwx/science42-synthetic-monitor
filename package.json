@@ -15,7 +15,8 @@
     "test:quick": "node scripts/run-quick-suites.mjs",
     "test:batch-all": "node --env-file=.env suites/batch-cases/run-all-case-categories.mjs",
     "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs",
-    "ask:advanced-research": "node --env-file=.env scripts/ask-advanced-research.mjs"
+    "ask:advanced-research": "node --env-file=.env scripts/ask-advanced-research-ws.mjs",
+    "ask:advanced-research-ui": "node --env-file=.env scripts/ask-advanced-research.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
