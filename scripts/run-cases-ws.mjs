@@ -389,9 +389,7 @@ if (DRY) {
 const baseUrl = getTargetUrl();
 console.log('[ws-preflight] 登录测试账号…');
 const auth = await authenticate(baseUrl);
-console.log('[ws-preflight] 登录成功，获取可用会话…');
-const conversations = await resolveConversationIds(baseUrl, auth.token, MAX_REQUEST_ATTEMPTS);
-console.log(`[ws-preflight] 已获取 ${conversations.length} 个隔离重试会话`);
+console.log(`[ws-preflight] 登录成功，将${NEW_CONVERSATION ? '创建专用会话' : '使用指定会话'}…`);
 console.log(`[ws-batch] category=${CATEGORY} selected=${selected.length} mode=sequential transport=websocket`);
 
 let cursor = 0;
@@ -407,7 +405,7 @@ async function worker(slot) {
     try {
       console.log(`[run ${slot}] ${item.title} 启动（WS 会话 ${slot}）`);
       console.log(`[ws] #${item.position} connecting team=${item.teamType}`);
-      const result = await runOne({ job: item, conversationIds: conversations, baseUrl, auth });
+      const result = await runOne({ job: item, baseUrl, auth });
       results.push({ position: item.position, title: item.title, ...result });
       console.log(`[run ${slot}] #${item.position} ${item.title} → ${result.reason || result.status} (${Math.round(result.durationMs / 1000)}s)`);
       console.log(`[ws] #${item.position} frames=${result.ws.frameCount} types=${result.ws.eventTypes.join(',') || 'none'} request=${result.clientMessageId}`);
