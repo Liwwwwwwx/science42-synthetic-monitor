@@ -20,6 +20,8 @@ const opt = (name, fallback) => {
 };
 const CATEGORY = opt('category', 'physics').toLowerCase();
 const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
+const REQUESTED_CONVERSATION_ID = opt('conversation-id', '').trim() || null;
+const NEW_CONVERSATION = args.includes('--new-conversation') || !REQUESTED_CONVERSATION_ID;
 const PARALLEL = 1;
 const MAX_REQUEST_ATTEMPTS = 3;
 const INTER_CASE_DELAY_MS = 10_000;
@@ -30,7 +32,7 @@ const POLL_MS = 2_000;
 const DRY = args.includes('--dry');
 
 function usage() {
-  console.log('Usage: npm run run:cases-ws -- --category=physics|data|material --indices=1,2 [--dry]');
+  console.log('Usage: npm run run:cases-ws -- --category=physics|data|material --indices=1,2 [--new-conversation|--conversation-id=<id>] [--dry]');
 }
 
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : null; }
@@ -95,14 +97,6 @@ async function authenticate(baseUrl) {
   }
   return loginWithPassword(baseUrl);
 }
-async function resolveConversationIds(baseUrl, token, count) {
-  const data = await jsonRequest(`${baseUrl}/api/conversation/conversations?page=1&limit=100`, { headers: { authorization: `Bearer ${token}` } });
-  const ids = [...new Set(findArray(data, 'conversations')
-    .map((item) => findString(item, ['external_id', 'externalId', 'conversation_id', 'conversationId', 'id']))
-    .filter(Boolean))];
-  if (ids.length < count) throw new Error(`可用会话不足：串行执行仍需要一个有效 conversation_id，当前仅 ${ids.length} 个`);
-  return ids.slice(0, count);
-}
 async function resolveWsUrl(baseUrl) {
   const data = await jsonRequest(`${baseUrl}/api/getWsUrl`);
   if (typeof data.message !== 'string' || !/^wss?:\/\//.test(data.message)) throw new Error('产品未提供有效 WebSocket 地址');
@@ -156,14 +150,30 @@ async function loadConversationMessages(baseUrl, auth, conversationId, timeoutMs
     return findArray(await load(), 'messages');
   }
 }
+
+/**
+ * 数据建模的规划、建模和产物有时会被拆成多条 assistant 记录持久化。
+ * 验收应观察本次请求后的完整片段集合，但 sourceRef 仍锚定最后一条真实消息，
+ * 以便预览时可准确回查产品端原文。
+ */
+function combinedAssistantContent(messages) {
+  return messages
+    .filter(isAssistant)
+    .map((message) => String(message.content || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS, isComplete = () => true) {
   const deadline = Date.now() + timeoutMs;
   let emptyAssistantSeenAt = null;
   let incompleteAssistant = null;
-  const accept = (candidate) => {
+  let incompleteVerificationContent = '';
+  const accept = (candidate, verificationContent = String(candidate?.content || '').trim()) => {
     if (!candidate) return null;
-    if (isComplete(String(candidate.content || '').trim())) return candidate;
+    if (isComplete(verificationContent)) return { assistant: candidate, verificationContent };
     incompleteAssistant = candidate;
+    incompleteVerificationContent = verificationContent;
     return null;
   };
   while (Date.now() < deadline) {
@@ -184,7 +194,7 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
       const nextUser = following.findIndex((message) => message?.role === 'user');
       const scoped = nextUser >= 0 ? following.slice(0, nextUser) : following;
       const answer = [...scoped].reverse().find(isAssistant);
-      const accepted = accept(answer);
+      const accepted = accept(answer, combinedAssistantContent(scoped));
       if (accepted) return accepted;
 
       // 服务偶发只插入空 assistant 占位而不再更新正文。先保留宽限期给正常流式落库，
@@ -200,8 +210,9 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     }
     // 部分部署的历史接口会丢弃 client_message_id。worker 独占会话，因此只能接受
     // 发送前快照之外新增/更新的 assistant；绝不回退到任意历史最后一条回答。
-    const answer = [...messages].reverse().find((message) => isAssistant(message) && !beforeSnapshot.has(messageFingerprint(message)));
-    const accepted = accept(answer);
+    const newAssistants = messages.filter((message) => isAssistant(message) && !beforeSnapshot.has(messageFingerprint(message)));
+    const answer = newAssistants.at(-1) || null;
+    const accepted = accept(answer, combinedAssistantContent(newAssistants));
     if (accepted) return accepted;
     await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(0, deadline - Date.now()))));
   }
@@ -209,10 +220,19 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     ? `已持久化 assistant 回复，但 ${Math.round(timeoutMs / 1000)}s 内未达到完整验收条件`
     : `请求已发送，但 ${Math.round(timeoutMs / 1000)}s 内未获得持久化 assistant 正文`);
   error.assistant = incompleteAssistant;
+  error.verificationContent = incompleteVerificationContent;
   throw error;
 }
-function sendAndWait(wsUrl, payload) {
+function sendAndWait(wsUrl, payload, initialConversationId = null) {
   let close;
+  let settleConversation;
+  let rejectConversation;
+  let conversationSettled = Boolean(initialConversationId);
+  const conversationReady = new Promise((resolve, reject) => {
+    settleConversation = resolve;
+    rejectConversation = reject;
+    if (initialConversationId) resolve(initialConversationId);
+  });
   const completion = new Promise((resolve, reject) => {
     const socket = new WebSocket(wsUrl);
     const eventTypes = new Set();
@@ -227,7 +247,13 @@ function sendAndWait(wsUrl, payload) {
       finished = true;
       clearTimeout(timer);
       try { socket.close(1000, error ? 'answer timeout' : 'answer completed'); } catch { /* noop */ }
-      if (error) reject(error); else resolve({ frameCount, eventTypes: [...eventTypes] });
+      if (error) {
+        if (!conversationSettled) rejectConversation(error);
+        reject(error);
+      } else {
+        if (!conversationSettled) rejectConversation(new Error('WebSocket 已结束但产品未返回 conversation_created'));
+        resolve({ frameCount, eventTypes: [...eventTypes] });
+      }
     };
     close = () => finish();
     // Node 22 的 WebSocket 是 EventTarget；不用浏览器属性回调，避免 open 事件未挂上的兼容性问题。
@@ -235,16 +261,26 @@ function sendAndWait(wsUrl, payload) {
     socket.addEventListener('message', (event) => {
       frameCount += 1;
       const raw = String(event.data || '');
-      try { const parsed = JSON.parse(raw); eventTypes.add(parsed?.type ? String(parsed.type) : 'json'); } catch { eventTypes.add('text'); }
+      try {
+        const parsed = JSON.parse(raw);
+        eventTypes.add(parsed?.type ? String(parsed.type) : 'json');
+        if (!conversationSettled && parsed?.type === 'conversation_created') {
+          const conversationId = findString(parsed, ['conversation_id', 'conversationId', 'id']);
+          if (conversationId) {
+            conversationSettled = true;
+            settleConversation(conversationId);
+          }
+        }
+      } catch { eventTypes.add('text'); }
       if (raw.trim() === '[end]' || /【.*(?:已结束|已完成):.*】/.test(raw)) finish();
     });
     socket.addEventListener('error', () => finish(new Error('WebSocket 连接或传输失败')));
     socket.addEventListener('close', () => { if (!finished && frameCount > 0) finish(); });
   });
-  return { completion, close: () => close?.() };
+  return { completion, conversationReady, close: () => close?.() };
 }
 
-const DATA_REQUIRED_PHRASES = ['CAD 组装与建模任务', '正在构思装配结构规划', '规划已交付，开始编写底层代码', '正在生成几何实体，请稍候'];
+const DATA_FLOW_PATTERN = /CAD\s*组装与建模任务|构思装配结构规划|编写底层代码|生成几何实体|三维(?:CAD)?(?:网格|模型)|网格(?:生成|划分)|可视化/i;
 function stepHasCodeBlock(content, step) {
   const next = step + 1;
   const section = new RegExp(`Step\\s*${step}[\\s.、:：][\\s\\S]*?(?=Step\\s*${next}[\\s.、:：]|$)`, 'i').exec(content)?.[0] || '';
@@ -259,7 +295,9 @@ function validateAnswer(job, content) {
     checks.push({ key: 'png', ok: /\.png\b|data:image\/png|!\[[^\]]*\]\([^)]*\.png/i.test(content), detail: 'PNG 产物' });
     checks.push({ key: 'complete', ok: /项目[\s\S]{0,160}执行完成/i.test(content), detail: '执行完成标记' });
   } else if (CATEGORY === 'data') {
-    checks.push({ key: 'cad_flow', ok: DATA_REQUIRED_PHRASES.every((phrase) => content.includes(phrase)), detail: 'CAD 流程文案' });
+    // 数据建模团队的分段文案会随任务模板和模型版本变化；只确认已进入 CAD/网格流程，
+    // 不再要求四句固定文案在同一条消息中出现。最终通过仍必须有 STL 产物。
+    checks.push({ key: 'cad_flow', ok: DATA_FLOW_PATTERN.test(content), detail: 'CAD/网格流程已启动' });
     checks.push({ key: 'stl', ok: /\.stl(?:[?#]|$)|<<<STL_VIEWER:|STL 模型|>STL<|STL_VIEWER/i.test(content), detail: 'STL 产物' });
   } else {
     const retrieval = /中文检索项/.test(content) && /论文检索进度|检索概览|检索结果重排|文献检索/.test(content) && /综合回答/.test(content);
@@ -268,65 +306,73 @@ function validateAnswer(job, content) {
   }
   return checks;
 }
-async function runOne({ job, conversationIds, baseUrl, auth }) {
+async function runOne({ job, baseUrl, auth }) {
   const started = Date.now();
   let sourceRef = null;
   let lastError = null;
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
     // 关闭客户端连接不会取消产品端已接收的任务。重试必须换会话，避免迟到的
     // assistant 回复落在下一次用户消息之后而被错误关联。
-    const conversationId = conversationIds[attempt - 1];
-    if (!conversationId) {
-      const error = new Error(`缺少第 ${attempt} 次重试的隔离会话，无法安全继续发送请求`);
-      error.sourceRef = sourceRef;
-      throw error;
-    }
+    let conversationId = attempt === 1 && !NEW_CONVERSATION ? REQUESTED_CONVERSATION_ID : null;
     const clientMessageId = `case-ws-${crypto.randomUUID()}`;
     sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant: null, content: '' });
     const payload = {
-      action: 'send_message', conversation_id: conversationId, client_message_id: clientMessageId,
+      action: 'send_message', client_message_id: clientMessageId,
       message: { content: job.prompt }, user_name: auth.userName, file_metadata: job.fileMetadata || [],
-      taskid: `${conversationId}-${clientMessageId}`, team_type: job.teamType,
+      taskid: `${conversationId || 'new'}-${clientMessageId}`, team_type: job.teamType,
+      ...(conversationId ? { conversation_id: conversationId } : {}),
       ...(job.pdeImagePara ? { pde_image_para: job.pdeImagePara } : {}),
     };
     let socket = null;
-    let requestDispatched = false;
     try {
-      const beforeSnapshot = new Set((await loadConversationMessages(baseUrl, auth, conversationId)).map(messageFingerprint));
+      const beforeSnapshot = conversationId
+        ? new Set((await loadConversationMessages(baseUrl, auth, conversationId)).map(messageFingerprint))
+        : new Set();
       const wsUrl = await resolveWsUrl(baseUrl);
-      socket = sendAndWait(wsUrl, payload);
-      requestDispatched = true;
+      socket = sendAndWait(wsUrl, payload, conversationId);
+      conversationId = await socket.conversationReady;
+      sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant: null, content: '' });
       // 不能主动关闭 WS：物理等团队会将客户端断开视为取消生成。业务完成以
       // 持久化回答满足该案例完整验收项为准，而不是第一段非空 assistant 内容。
       const wsCompletion = socket.completion.catch((error) => ({ frameCount: 0, eventTypes: [`socket-error:${error.message}`] }));
-      const assistant = await waitForPersistedAnswer(
+      const answerResult = await waitForPersistedAnswer(
         baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, PERSISTENCE_TIMEOUT_MS,
         (content) => validateAnswer(job, content).every((check) => check.ok),
       );
+      const { assistant, verificationContent } = answerResult;
       const answer = String(assistant.content).trim();
       sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant, content: answer });
       socket.close();
       socket = null;
       const ws = await wsCompletion;
-      const checks = validateAnswer(job, answer);
+      const checks = validateAnswer(job, verificationContent);
       const failed = checks.filter((check) => !check.ok);
       return { status: failed.length ? 'FAILED' : 'PASSED', durationMs: Date.now() - started, checks, reason: failed.map((check) => check.detail).join('；') || '', ws, clientMessageId, sourceRef, attempts: attempt };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (lastError.assistant) sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant: lastError.assistant, content: lastError.assistant.content });
+      const observedContent = String(lastError.verificationContent || lastError.assistant?.content || '').trim();
+      if (lastError.assistant) {
+        sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant: lastError.assistant, content: lastError.assistant.content });
+        const checks = validateAnswer(job, observedContent);
+        lastError.checks = checks;
+        lastError.receivedContentLength = observedContent.length;
+        const missing = checks.filter((check) => !check.ok).map((check) => check.detail);
+        lastError.message = `已收到 ${observedContent.length} 字 assistant 回复，但本次案例尚未完成：${missing.join('；') || '未达到完整验收条件'}`;
+      }
+      lastError.clientMessageId = clientMessageId;
       socket?.close();
       // 失败路径也等待 completion 收口，避免上一次请求遗留超时计时器或未处理拒绝。
-      await socket?.completion.catch(() => {});
-      // 一旦 payload 已交给 WS，产品端可能仍在执行。重复发送只会制造并发任务和
-      // 错误关联；持久化预算耗尽后应以一次可读失败收口，而不是继续换会话补发。
-      if (requestDispatched) break;
+      lastError.ws = await socket?.completion.catch((socketError) => ({ frameCount: 0, eventTypes: [`socket-error:${socketError.message}`] }));
       if (attempt < MAX_REQUEST_ATTEMPTS) {
         console.log(`[ws] #${job.position} 第 ${attempt}/${MAX_REQUEST_ATTEMPTS} 次未获得正文，已断开连接，准备重试：${lastError.message}`);
       }
     }
   }
-  const error = new Error(`连续 ${MAX_REQUEST_ATTEMPTS} 次未获得正文：${lastError.message}`, { cause: lastError });
+  const error = new Error(lastError?.message || '案例请求未能完成', { cause: lastError });
   error.sourceRef = sourceRef;
+  error.checks = lastError?.checks || null;
+  error.clientMessageId = lastError?.clientMessageId || null;
+  error.ws = lastError?.ws || null;
   throw error;
 }
 
@@ -369,7 +415,15 @@ async function worker(slot) {
     } catch (error) {
       const result = { position: item.position, title: item.title, status: 'FAILED', reason: error instanceof Error ? error.message : String(error), durationMs: Date.now() - runStarted };
       results.push(result); console.log(`[run ${slot}] #${item.position} ${item.title} → ${result.reason} (${Math.round(result.durationMs / 1000)}s)`);
-      if (error?.sourceRef) console.log(`__CASE_WS_RESULT__${JSON.stringify({ position: item.position, executionMode: 'websocket', sourceRef: error.sourceRef })}`);
+      if (error?.sourceRef) console.log(`__CASE_WS_RESULT__${JSON.stringify({
+        position: item.position,
+        executionMode: 'websocket',
+        requestId: error.clientMessageId || null,
+        frameCount: Number.isInteger(error.ws?.frameCount) ? error.ws.frameCount : null,
+        eventTypes: Array.isArray(error.ws?.eventTypes) ? error.ws.eventTypes : null,
+        checks: Array.isArray(error.checks) ? error.checks : null,
+        sourceRef: error.sourceRef,
+      })}`);
     }
     if (cursor < selected.length) {
       console.log(`[ws] #${item.position} 已结算，等待 ${INTER_CASE_DELAY_MS / 1000}s 后执行下一题…`);

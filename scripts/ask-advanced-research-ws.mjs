@@ -149,23 +149,36 @@ async function waitForPersistedAnswer(baseUrl, token, conversationId, clientMess
   throw new Error('回答未在会话消息记录中持久化');
 }
 
-async function sendAndWait(wsUrl, payload) {
-  return new Promise((resolve, reject) => {
+function sendAndWait(wsUrl, payload, initialConversationId = null) {
+  let close;
+  let settleConversation;
+  let rejectConversation;
+  let conversationSettled = Boolean(initialConversationId);
+  const conversationReady = new Promise((resolve, reject) => {
+    settleConversation = resolve;
+    rejectConversation = reject;
+    if (initialConversationId) resolve(initialConversationId);
+  });
+  const completion = new Promise((resolve, reject) => {
     const socket = new WebSocket(wsUrl);
     const eventTypes = new Set();
     let frameCount = 0;
     let completed = false;
-    const timer = setTimeout(() => {
-      try { socket.close(1000, 'answer timeout'); } catch { /* ignore */ }
-      reject(new Error(`WebSocket 回答超时（${Math.round(ANSWER_TIMEOUT_MS / 1000)}s）`));
-    }, ANSWER_TIMEOUT_MS);
-    const finish = () => {
+    const finish = (error = null) => {
       if (completed) return;
       completed = true;
       clearTimeout(timer);
       try { socket.close(1000, 'answer completed'); } catch { /* ignore */ }
-      resolve({ frameCount, eventTypes: [...eventTypes] });
+      if (error) {
+        if (!conversationSettled) rejectConversation(error);
+        reject(error);
+      } else {
+        if (!conversationSettled) rejectConversation(new Error('WebSocket 已结束但产品未返回 conversation_created'));
+        resolve({ frameCount, eventTypes: [...eventTypes] });
+      }
     };
+    const timer = setTimeout(() => finish(new Error(`WebSocket 回答超时（${Math.round(ANSWER_TIMEOUT_MS / 1000)}s）`)), ANSWER_TIMEOUT_MS);
+    close = () => finish();
     socket.onopen = () => {
       logProgress('ws connected; sending question');
       socket.send(JSON.stringify(payload));
@@ -177,6 +190,13 @@ async function sendAndWait(wsUrl, payload) {
         const parsed = JSON.parse(raw);
         if (parsed?.type) eventTypes.add(String(parsed.type));
         else eventTypes.add('json');
+        if (!conversationSettled && parsed?.type === 'conversation_created') {
+          const conversationId = findString(parsed, ['conversation_id', 'conversationId', 'id']);
+          if (conversationId) {
+            conversationSettled = true;
+            settleConversation(conversationId);
+          }
+        }
       } catch {
         eventTypes.add('text');
       }
@@ -184,16 +204,14 @@ async function sendAndWait(wsUrl, payload) {
       if (raw.trim() === '[end]' || /【.*(?:已结束|已完成):.*】/.test(raw)) finish();
     };
     socket.onerror = () => {
-      if (completed) return;
-      completed = true;
-      clearTimeout(timer);
-      reject(new Error('WebSocket 连接或传输失败'));
+      finish(new Error('WebSocket 连接或传输失败'));
     };
     socket.onclose = () => {
       // 部分后端以正常 close 表示流式回答结束。
       if (!completed && frameCount > 0) finish();
     };
   });
+  return { completion, conversationReady, close: () => close?.() };
 }
 
 let currentJob = null;
@@ -207,20 +225,27 @@ async function main() {
   startedAt = started;
   logProgress(`question=${job.questionId} transport=websocket`);
   const { token, userName } = await authenticate(baseUrl);
-  const conversationId = await resolveConversation(baseUrl, token);
+  const requestedConversationId = arg('conversation-id');
+  let conversationId = requestedConversationId || null;
+  if (!conversationId && !process.argv.includes('--new-conversation')) {
+    // 兼容旧命令：未显式指定时才继续使用旧的历史会话选择逻辑。
+    conversationId = await resolveConversation(baseUrl, token);
+  }
   const wsUrl = await resolveWsUrl(baseUrl);
   const clientMessageId = `research-dataset-${crypto.randomUUID()}`;
   const payload = {
     action: 'send_message',
-    conversation_id: conversationId,
     client_message_id: clientMessageId,
     message: { content: job.prompt },
     user_name: userName,
     file_metadata: [],
-    taskid: `${conversationId}-${clientMessageId}`,
+    taskid: `${conversationId || 'new'}-${clientMessageId}`,
     team_type: 'deepresearch',
+    ...(conversationId ? { conversation_id: conversationId } : {}),
   };
-  const wsResult = await sendAndWait(wsUrl, payload);
+  const socket = sendAndWait(wsUrl, payload, conversationId);
+  conversationId = await socket.conversationReady;
+  const wsResult = await socket.completion;
   logProgress(`ws frames=${wsResult.frameCount} types=${wsResult.eventTypes.join(',') || 'none'}; checking persistence`);
   const answer = await waitForPersistedAnswer(baseUrl, token, conversationId, clientMessageId);
   emitResult({
@@ -233,6 +258,8 @@ async function main() {
     userContent: job.prompt,
     assistantContent: answer,
     answerChars: answer.length,
+    conversationId,
+    clientMessageId,
     durationMs: Date.now() - started,
     collectedAt: new Date().toISOString(),
   });
