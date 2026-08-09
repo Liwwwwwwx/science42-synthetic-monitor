@@ -22,9 +22,6 @@ const CATEGORY = opt('category', 'physics').toLowerCase();
 const INDICES = opt('indices', '').split(',').filter(Boolean).map(Number);
 const PARALLEL = 1;
 const MAX_REQUEST_ATTEMPTS = 3;
-// 15 秒仅作为 WebSocket 客户端的观察窗口：产品已接收的任务会继续执行，
-// 不能因 WS 没有及时回帧就重复发送同一案例。
-const SOCKET_OBSERVATION_MS = 15_000;
 const INTER_CASE_DELAY_MS = 10_000;
 const ANSWER_TIMEOUT_MS = Number(opt('timeout', CATEGORY === 'data' ? 660_000 : 300_000));
 const PERSISTENCE_TIMEOUT_MS = Number(opt('persistence-timeout', CATEGORY === 'data' ? 660_000 : CATEGORY === 'material' ? 390_000 : 60_000));
@@ -159,16 +156,24 @@ async function loadConversationMessages(baseUrl, auth, conversationId, timeoutMs
     return findArray(await load(), 'messages');
   }
 }
-async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS) {
+async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS, isComplete = () => true) {
   const deadline = Date.now() + timeoutMs;
   let emptyAssistantSeenAt = null;
+  let incompleteAssistant = null;
+  const accept = (candidate) => {
+    if (!candidate) return null;
+    if (isComplete(String(candidate.content || '').trim())) return candidate;
+    incompleteAssistant = candidate;
+    return null;
+  };
   while (Date.now() < deadline) {
     const remainingMs = deadline - Date.now();
     // 不把最后不足一秒的尾窗交给 HTTP 请求，否则会把“预算耗尽”伪装成 1 秒网络超时。
     if (remainingMs < 1_000) break;
     const messages = await loadConversationMessages(baseUrl, auth, conversationId, Math.min(45_000, remainingMs));
     const direct = [...messages].reverse().find((message) => message?.client_message_id === clientMessageId && isAssistant(message));
-    if (direct) return direct;
+    const directAccepted = accept(direct);
+    if (directAccepted) return directAccepted;
 
     // Science42 当前仅稳定地把 client_message_id 写到用户消息；assistant 记录常不继承该字段。
     // 每个 worker 独占一个会话，因此以该用户消息为锚点，取下一条用户消息之前的最后一条 assistant，
@@ -179,7 +184,8 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
       const nextUser = following.findIndex((message) => message?.role === 'user');
       const scoped = nextUser >= 0 ? following.slice(0, nextUser) : following;
       const answer = [...scoped].reverse().find(isAssistant);
-      if (answer) return answer;
+      const accepted = accept(answer);
+      if (accepted) return accepted;
 
       // 服务偶发只插入空 assistant 占位而不再更新正文。先保留宽限期给正常流式落库，
       // 到期后明确报业务失败，不能让一个已确定无正文的案例占满整个持久化轮询窗口。
@@ -195,10 +201,15 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     // 部分部署的历史接口会丢弃 client_message_id。worker 独占会话，因此只能接受
     // 发送前快照之外新增/更新的 assistant；绝不回退到任意历史最后一条回答。
     const answer = [...messages].reverse().find((message) => isAssistant(message) && !beforeSnapshot.has(messageFingerprint(message)));
-    if (answer) return answer;
+    const accepted = accept(answer);
+    if (accepted) return accepted;
     await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(0, deadline - Date.now()))));
   }
-  throw new Error(`请求已发送，但 ${Math.round(timeoutMs / 1000)}s 内未获得持久化 assistant 正文`);
+  const error = new Error(incompleteAssistant
+    ? `已持久化 assistant 回复，但 ${Math.round(timeoutMs / 1000)}s 内未达到完整验收条件`
+    : `请求已发送，但 ${Math.round(timeoutMs / 1000)}s 内未获得持久化 assistant 正文`);
+  error.assistant = incompleteAssistant;
+  throw error;
 }
 function sendAndWait(wsUrl, payload) {
   let close;
@@ -280,20 +291,18 @@ async function runOne({ job, conversationIds, baseUrl, auth }) {
     };
     let socket = null;
     let requestDispatched = false;
-    let socketObservationTimer = null;
     try {
       const beforeSnapshot = new Set((await loadConversationMessages(baseUrl, auth, conversationId)).map(messageFingerprint));
       const wsUrl = await resolveWsUrl(baseUrl);
       socket = sendAndWait(wsUrl, payload);
       requestDispatched = true;
-      // 材料服务会持续输出但不总是发送 [end]。15 秒后只收口客户端 WS，
-      // 仍按分类预算轮询同一会话的持久化正文；这避免长任务被重复提交。
-      socketObservationTimer = setTimeout(() => socket?.close(), SOCKET_OBSERVATION_MS);
+      // 不能主动关闭 WS：物理等团队会将客户端断开视为取消生成。业务完成以
+      // 持久化回答满足该案例完整验收项为准，而不是第一段非空 assistant 内容。
       const wsCompletion = socket.completion.catch((error) => ({ frameCount: 0, eventTypes: [`socket-error:${error.message}`] }));
       const assistant = await waitForPersistedAnswer(
         baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, PERSISTENCE_TIMEOUT_MS,
+        (content) => validateAnswer(job, content).every((check) => check.ok),
       );
-      clearTimeout(socketObservationTimer);
       const answer = String(assistant.content).trim();
       sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant, content: answer });
       socket.close();
@@ -303,8 +312,8 @@ async function runOne({ job, conversationIds, baseUrl, auth }) {
       const failed = checks.filter((check) => !check.ok);
       return { status: failed.length ? 'FAILED' : 'PASSED', durationMs: Date.now() - started, checks, reason: failed.map((check) => check.detail).join('；') || '', ws, clientMessageId, sourceRef, attempts: attempt };
     } catch (error) {
-      clearTimeout(socketObservationTimer);
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.assistant) sourceRef = buildSourceRef({ conversationId, clientMessageId, assistant: lastError.assistant, content: lastError.assistant.content });
       socket?.close();
       // 失败路径也等待 completion 收口，避免上一次请求遗留超时计时器或未处理拒绝。
       await socket?.completion.catch(() => {});
