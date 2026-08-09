@@ -27,6 +27,8 @@ const MAX_REQUEST_ATTEMPTS = 3;
 const INTER_CASE_DELAY_MS = 10_000;
 const ANSWER_TIMEOUT_MS = Number(opt('timeout', CATEGORY === 'data' ? 660_000 : 300_000));
 const PERSISTENCE_TIMEOUT_MS = Number(opt('persistence-timeout', CATEGORY === 'data' ? 660_000 : CATEGORY === 'material' ? 390_000 : 60_000));
+// 无正文时继续占满 390/660 秒会阻塞串行轮询；首段正文缺席时换专用会话重试。
+const FIRST_ASSISTANT_BODY_TIMEOUT_MS = Number(opt('first-assistant-body-timeout', 15_000));
 const EMPTY_ASSISTANT_GRACE_MS = Number(opt('empty-assistant-grace', 90_000));
 const POLL_MS = 2_000;
 const DRY = args.includes('--dry');
@@ -166,11 +168,20 @@ function combinedAssistantContent(messages) {
 
 async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS, isComplete = () => true) {
   const deadline = Date.now() + timeoutMs;
+  const firstAssistantBodyDeadline = Date.now() + Math.min(FIRST_ASSISTANT_BODY_TIMEOUT_MS, timeoutMs);
   let emptyAssistantSeenAt = null;
   let incompleteAssistant = null;
   let incompleteVerificationContent = '';
+  let assistantBodySeen = false;
+  const firstBodyTimeout = () => {
+    const error = new Error(`产品在 ${Math.round(FIRST_ASSISTANT_BODY_TIMEOUT_MS / 1000)}s 内未写入非空 assistant 正文，已断开并换新会话重试`);
+    error.phase = 'first_assistant_body_timeout';
+    error.firstAssistantBodyTimeoutMs = FIRST_ASSISTANT_BODY_TIMEOUT_MS;
+    return error;
+  };
   const accept = (candidate, verificationContent = String(candidate?.content || '').trim()) => {
     if (!candidate) return null;
+    assistantBodySeen = true;
     if (isComplete(verificationContent)) return { assistant: candidate, verificationContent };
     incompleteAssistant = candidate;
     incompleteVerificationContent = verificationContent;
@@ -180,7 +191,20 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     const remainingMs = deadline - Date.now();
     // 不把最后不足一秒的尾窗交给 HTTP 请求，否则会把“预算耗尽”伪装成 1 秒网络超时。
     if (remainingMs < 1_000) break;
-    const messages = await loadConversationMessages(baseUrl, auth, conversationId, Math.min(45_000, remainingMs));
+    // 首段正文窗口也约束本次读取，不能让单个卡住的 HTTP 请求越过 15 秒阈值。
+    const firstBodyRemainingMs = firstAssistantBodyDeadline - Date.now();
+    const requestBudgetMs = assistantBodySeen
+      ? remainingMs
+      : Math.min(remainingMs, Math.max(1_000, firstBodyRemainingMs));
+    let messages;
+    try {
+      messages = await loadConversationMessages(baseUrl, auth, conversationId, Math.min(45_000, requestBudgetMs));
+    } catch (error) {
+      if (!assistantBodySeen && Date.now() >= firstAssistantBodyDeadline && /^HTTP 请求超时/.test(String(error?.message || ''))) {
+        throw firstBodyTimeout();
+      }
+      throw error;
+    }
     const direct = [...messages].reverse().find((message) => message?.client_message_id === clientMessageId && isAssistant(message));
     const directAccepted = accept(direct);
     if (directAccepted) return directAccepted;
@@ -214,6 +238,9 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     const answer = newAssistants.at(-1) || null;
     const accepted = accept(answer, combinedAssistantContent(newAssistants));
     if (accepted) return accepted;
+    if (!assistantBodySeen && Date.now() >= firstAssistantBodyDeadline) {
+      throw firstBodyTimeout();
+    }
     await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(0, deadline - Date.now()))));
   }
   const error = new Error(incompleteAssistant
