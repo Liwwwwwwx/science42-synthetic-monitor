@@ -408,6 +408,15 @@ async function runOne({ job, baseUrl, auth }) {
       socket?.close();
       // 失败路径也等待 completion 收口，避免上一次请求遗留超时计时器或未处理拒绝。
       lastError.ws = await socket?.completion.catch((socketError) => ({ frameCount: 0, eventTypes: [`socket-error:${socketError.message}`] }));
+      // 已经拿到正文时，失败属于业务验收（例如数据建模缺少 STL），再次发送同一道题
+      // 既不能补齐当前回答，也会占用完整分类预算并制造重复产品任务。直接结算为失败，
+      // 让串行轮询继续下一题，同时保留正文引用、检查项和 WS 诊断。
+      if (lastError.assistant) {
+        return {
+          status: 'FAILED', durationMs: Date.now() - started, checks: lastError.checks || [],
+          reason: lastError.message, ws: lastError.ws, clientMessageId, sourceRef, attempts: attempt,
+        };
+      }
       if (attempt < MAX_REQUEST_ATTEMPTS) {
         console.log(`[ws] #${job.position} 第 ${attempt}/${MAX_REQUEST_ATTEMPTS} 次未获得正文，已断开连接，准备重试：${lastError.message}`);
       }
