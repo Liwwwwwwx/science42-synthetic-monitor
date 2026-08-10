@@ -1,8 +1,8 @@
 [Unit]
-Description=Run Science42 synthetic monitor every ten minutes
+Description=Run Science42 synthetic monitor every thirty minutes
 
 [Timer]
-OnCalendar=*:0/10
+OnCalendar=*:0/30
 Persistent=true
 RandomizedDelaySec=30
 Unit=science42-synthetic-monitor.service
