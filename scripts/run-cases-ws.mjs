@@ -26,8 +26,10 @@ const PARALLEL = 1;
 const MAX_REQUEST_ATTEMPTS = 3;
 const INTER_CASE_DELAY_MS = 10_000;
 const ANSWER_TIMEOUT_MS = Number(opt('timeout', CATEGORY === 'data' ? 660_000 : 300_000));
-const PERSISTENCE_TIMEOUT_MS = Number(opt('persistence-timeout', CATEGORY === 'data' ? 660_000 : CATEGORY === 'material' ? 390_000 : 60_000));
-// 无正文时继续占满 390/660 秒会阻塞串行轮询；首段正文缺席时换专用会话重试。
+// 物理团队的完整回答可接近一分钟；60 秒边界会把接近完成的正常任务误判为失败。
+const PERSISTENCE_TIMEOUT_MS = Number(opt('persistence-timeout', CATEGORY === 'data' ? 660_000 : CATEGORY === 'material' ? 390_000 : 300_000));
+// 无业务帧时继续占满分类预算只会阻塞串行轮询。材料会很快落正文；物理/数据建模
+// 则可能先流式输出规划/进度，只有完全无业务帧才允许在这个窗口后重试。
 const FIRST_ASSISTANT_BODY_TIMEOUT_MS = Number(opt('first-assistant-body-timeout', 15_000));
 const EMPTY_ASSISTANT_GRACE_MS = Number(opt('empty-assistant-grace', 90_000));
 const POLL_MS = 2_000;
@@ -166,17 +168,22 @@ function combinedAssistantContent(messages) {
     .join('\n\n');
 }
 
-async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS, isComplete = () => true) {
+async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, timeoutMs = PERSISTENCE_TIMEOUT_MS, isComplete = () => true, hasBusinessFrame = () => false) {
   const deadline = Date.now() + timeoutMs;
   const firstAssistantBodyDeadline = Date.now() + Math.min(FIRST_ASSISTANT_BODY_TIMEOUT_MS, timeoutMs);
   let emptyAssistantSeenAt = null;
   let incompleteAssistant = null;
   let incompleteVerificationContent = '';
   let assistantBodySeen = false;
-  const firstBodyTimeout = () => {
-    const error = new Error(`产品在 ${Math.round(FIRST_ASSISTANT_BODY_TIMEOUT_MS / 1000)}s 内未写入非空 assistant 正文，已断开并换新会话重试`);
-    error.phase = 'first_assistant_body_timeout';
-    error.firstAssistantBodyTimeoutMs = FIRST_ASSISTANT_BODY_TIMEOUT_MS;
+  let businessFrameSeen = false;
+  const observeBusinessFrame = () => {
+    businessFrameSeen ||= Boolean(hasBusinessFrame());
+    return businessFrameSeen;
+  };
+  const firstResponseTimeout = () => {
+    const error = new Error(`WebSocket 在 ${Math.round(FIRST_ASSISTANT_BODY_TIMEOUT_MS / 1000)}s 内未收到有效业务帧，已断开并换新会话重试`);
+    error.phase = 'first_business_frame_timeout';
+    error.firstBusinessFrameTimeoutMs = FIRST_ASSISTANT_BODY_TIMEOUT_MS;
     return error;
   };
   const accept = (candidate, verificationContent = String(candidate?.content || '').trim()) => {
@@ -193,7 +200,9 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     if (remainingMs < 1_000) break;
     // 首段正文窗口也约束本次读取，不能让单个卡住的 HTTP 请求越过 15 秒阈值。
     const firstBodyRemainingMs = firstAssistantBodyDeadline - Date.now();
-    const requestBudgetMs = assistantBodySeen
+    // 收到业务帧后，产品已证明确实在处理；后续查询恢复完整分类预算，避免被 1 秒轮询
+    // 反复中断，或把规划型物理/数据建模任务错误重试。
+    const requestBudgetMs = assistantBodySeen || observeBusinessFrame()
       ? remainingMs
       : Math.min(remainingMs, Math.max(1_000, firstBodyRemainingMs));
     let messages;
@@ -201,7 +210,8 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
       messages = await loadConversationMessages(baseUrl, auth, conversationId, Math.min(45_000, requestBudgetMs));
     } catch (error) {
       if (!assistantBodySeen && Date.now() >= firstAssistantBodyDeadline && /^HTTP 请求超时/.test(String(error?.message || ''))) {
-        throw firstBodyTimeout();
+        if (!observeBusinessFrame()) throw firstResponseTimeout();
+        continue;
       }
       throw error;
     }
@@ -239,7 +249,7 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
     const accepted = accept(answer, combinedAssistantContent(newAssistants));
     if (accepted) return accepted;
     if (!assistantBodySeen && Date.now() >= firstAssistantBodyDeadline) {
-      throw firstBodyTimeout();
+      if (!observeBusinessFrame()) throw firstResponseTimeout();
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(0, deadline - Date.now()))));
   }
@@ -252,6 +262,7 @@ async function waitForPersistedAnswer(baseUrl, auth, conversationId, clientMessa
 }
 function sendAndWait(wsUrl, payload, initialConversationId = null) {
   let close;
+  let businessFrameCount = 0;
   let settleConversation;
   let rejectConversation;
   let conversationSettled = Boolean(initialConversationId);
@@ -288,8 +299,9 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
     socket.addEventListener('message', (event) => {
       frameCount += 1;
       const raw = String(event.data || '');
+      let parsed = null;
       try {
-        const parsed = JSON.parse(raw);
+        parsed = JSON.parse(raw);
         eventTypes.add(parsed?.type ? String(parsed.type) : 'json');
         if (!conversationSettled && parsed?.type === 'conversation_created') {
           const conversationId = findString(parsed, ['conversation_id', 'conversationId', 'id']);
@@ -299,12 +311,17 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
           }
         }
       } catch { eventTypes.add('text'); }
+      // conversation_created/team_status 只是连接或路由确认；任意正文、进度或其他业务 JSON
+      // 说明产品仍在处理当前请求，不能因为尚未落库 assistant 而中途取消物理/数据建模。
+      const frameType = String(parsed?.type || '');
+      if ((parsed && !['conversation_created', 'team_status'].includes(frameType))
+        || (!parsed && raw.trim() && !['[start]', '[end]'].includes(raw.trim()))) businessFrameCount += 1;
       if (raw.trim() === '[end]' || /【.*(?:已结束|已完成):.*】/.test(raw)) finish();
     });
     socket.addEventListener('error', () => finish(new Error('WebSocket 连接或传输失败')));
     socket.addEventListener('close', () => { if (!finished && frameCount > 0) finish(); });
   });
-  return { completion, conversationReady, close: () => close?.() };
+  return { completion, conversationReady, hasBusinessFrame: () => businessFrameCount > 0, close: () => close?.() };
 }
 
 const DATA_FLOW_PATTERN = /CAD\s*组装与建模任务|构思装配结构规划|编写底层代码|生成几何实体|三维(?:CAD)?(?:网格|模型)|网格(?:生成|划分)|可视化/i;
@@ -365,6 +382,7 @@ async function runOne({ job, baseUrl, auth }) {
       const answerResult = await waitForPersistedAnswer(
         baseUrl, auth, conversationId, clientMessageId, beforeSnapshot, PERSISTENCE_TIMEOUT_MS,
         (content) => validateAnswer(job, content).every((check) => check.ok),
+        () => socket?.hasBusinessFrame(),
       );
       const { assistant, verificationContent } = answerResult;
       const answer = String(assistant.content).trim();
