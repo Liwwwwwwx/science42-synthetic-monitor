@@ -12,12 +12,14 @@
     "test:batch-cases": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
     "test:case": "playwright test suites/batch-cases/batch-case-runner.spec.mjs --project=chromium --workers=1",
     "run:cases": "sh scripts/with-shared-monitor-lock.sh node scripts/run-cases.mjs",
-    "run:cases-ws": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/run-cases-ws.mjs",
+    "run:cases-ws": "sh scripts/with-shared-monitor-lock.sh node scripts/run-cases-ws.mjs",
+    "run:cases-ws:local": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/run-cases-ws.mjs",
     "preview:case-output": "node scripts/read-case-output.mjs",
     "test:quick": "node scripts/run-quick-suites.mjs",
     "test:batch-all": "node --env-file=.env suites/batch-cases/run-all-case-categories.mjs",
     "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs",
-    "ask:advanced-research": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research-ws.mjs",
+    "ask:advanced-research": "sh scripts/with-shared-monitor-lock.sh node scripts/ask-advanced-research-ws.mjs",
+    "ask:advanced-research:local": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research-ws.mjs",
     "ask:advanced-research-ui": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research.mjs"
   },
   "devDependencies": {
