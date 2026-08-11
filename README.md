@@ -29,16 +29,16 @@ CASE_LIMIT=0 npm run test:batch-all
 npm run run:cases -- --category=physics --indices=1,2,3,4,5
 
 # 长期业务轮询（默认推荐；不启动 Chromium）
-npm run run:cases-ws -- --category=physics --indices=1,2,3
-npm run run:cases-ws -- --category=data --indices=1
-npm run run:cases-ws -- --category=material --indices=1
+npm run run:cases-ws:local -- --category=physics --indices=1,2,3
+npm run run:cases-ws:local -- --category=data --indices=1
+npm run run:cases-ws:local -- --category=material --indices=1
 
 npm run probe:team-api
 ```
 
 `run:cases-ws` 复用聊天页案例卡的 `prompt`、`team_type`、`pde_image_para` 与文件元数据契约，按 `client_message_id` 回查持久化回答；所有案例按选中顺序串行执行。物理求解校验 Step 1–6、PNG 与完成；数据建模校验 CAD 流程与 STL；材料计算校验检索综合型或文本分析型 Profile。复杂页面交互（例如「追问与补充」）继续由 Playwright 路径覆盖。
 
-WebSocket Runner 会优先复用私有环境变量 `SCIENCE42_TOKEN` / `SCIENCE42_USER_NAME`，其次复用 `auth:setup` 保存的 Playwright 登录态；两者都不会重新登录。token 失效时会明确报错，默认不自动登录，以免挤掉正在使用同一账号的浏览器会话。Playwright 也会持续复用 `SCIENCE42_STORAGE_STATE`，因此滑块只需在首次建立或登录态真正过期后手动完成一次。
+WebSocket Runner 会优先复用私有环境变量 `SCIENCE42_TOKEN` / `SCIENCE42_USER_NAME`，其次复用 `auth:setup` 保存的 Playwright 登录态；两者都不会重新登录。token 失效时会明确报错，默认不自动登录，以免挤掉正在使用同一账号的浏览器会话。生产多账号部署时，每个 profile 使用 `/etc/science42-synthetic-monitor/profiles/<profile>.env` 的独立 token、storage state 和 flock；后台只能按固定 profile 选择该文件，不能接受外部路径。Playwright 也会持续复用 `SCIENCE42_STORAGE_STATE`，因此滑块只需在首次建立或登录态真正过期后手动完成一次。
 
 ## 结果
 

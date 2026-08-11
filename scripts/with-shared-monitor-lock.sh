@@ -3,7 +3,8 @@
 # 线上 systemd 与 Admin 后端只要都经 npm script 启动，就会自然共享这把锁。
 set -eu
 
-lock_file="${SYNTHETIC_SHARED_LOCK_FILE:-/tmp/science42-synthetic-monitor.lock}"
+profile="${SYNTHETIC_ACCOUNT_PROFILE:-shared}"
+lock_file="${SYNTHETIC_SHARED_LOCK_FILE:-/tmp/science42-synthetic-monitor-${profile}.lock}"
 wait_seconds="${SYNTHETIC_SHARED_LOCK_WAIT_SECONDS:-1800}"
 
 if ! command -v flock >/dev/null 2>&1; then
