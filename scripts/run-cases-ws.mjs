@@ -10,6 +10,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { getTargetUrl } from '../shared/config/project.mjs';
 import { isAutomaticReloginAllowed, loadReusableWsAuth } from '../shared/auth/reusable-ws-auth.mjs';
+import { createWebSocketCloseError, createWebSocketError, formatAttemptDiagnostic, retryBackoffMs } from '../shared/ws/transport-diagnostics.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JOBS_PATH = path.join(ROOT, 'shared/config/case-ws-jobs.json');
@@ -276,7 +277,9 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
     const eventTypes = new Set();
     let frameCount = 0;
     let opened = false;
+    let sent = false;
     let finished = false;
+    const socketState = () => ({ opened, sent, frameCount, eventTypes: [...eventTypes] });
     const timer = setTimeout(() => finish(new Error(opened
       ? `WebSocket 已连接但回答超时（${Math.round(ANSWER_TIMEOUT_MS / 1000)}s）`
       : `WebSocket 连接超时（${Math.round(ANSWER_TIMEOUT_MS / 1000)}s）`)), ANSWER_TIMEOUT_MS);
@@ -295,7 +298,15 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
     };
     close = () => finish();
     // Node 22 的 WebSocket 是 EventTarget；不用浏览器属性回调，避免 open 事件未挂上的兼容性问题。
-    socket.addEventListener('open', () => { opened = true; socket.send(JSON.stringify(payload)); });
+    socket.addEventListener('open', () => {
+      opened = true;
+      try {
+        socket.send(JSON.stringify(payload));
+        sent = true;
+      } catch (error) {
+        finish(createWebSocketError({ error }, socketState()));
+      }
+    });
     socket.addEventListener('message', (event) => {
       frameCount += 1;
       const raw = String(event.data || '');
@@ -318,8 +329,12 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
         || (!parsed && raw.trim() && !['[start]', '[end]'].includes(raw.trim()))) businessFrameCount += 1;
       if (raw.trim() === '[end]' || /【.*(?:已结束|已完成):.*】/.test(raw)) finish();
     });
-    socket.addEventListener('error', () => finish(new Error('WebSocket 连接或传输失败')));
-    socket.addEventListener('close', () => { if (!finished && frameCount > 0) finish(); });
+    socket.addEventListener('error', (event) => finish(createWebSocketError(event, socketState())));
+    socket.addEventListener('close', (event) => {
+      if (finished) return;
+      if (frameCount > 0) finish();
+      else finish(createWebSocketCloseError(event, socketState()));
+    });
   });
   return { completion, conversationReady, hasBusinessFrame: () => businessFrameCount > 0, close: () => close?.() };
 }
@@ -354,7 +369,9 @@ async function runOne({ job, baseUrl, auth }) {
   const started = Date.now();
   let sourceRef = null;
   let lastError = null;
+  const attemptChecks = [];
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    const attemptStarted = Date.now();
     // 关闭客户端连接不会取消产品端已接收的任务。重试必须换会话，避免迟到的
     // assistant 回复落在下一次用户消息之后而被错误关联。
     let conversationId = attempt === 1 && !NEW_CONVERSATION ? REQUESTED_CONVERSATION_ID : null;
@@ -390,9 +407,18 @@ async function runOne({ job, baseUrl, auth }) {
       socket.close();
       socket = null;
       const ws = await wsCompletion;
-      const checks = validateAnswer(job, verificationContent);
+      const recoveredAttempts = attemptChecks.map((check) => ({
+        ...check,
+        ok: true,
+        detail: `后续重试已恢复；${check.detail}`,
+      }));
+      const checks = [...recoveredAttempts, ...validateAnswer(job, verificationContent)];
       const failed = checks.filter((check) => !check.ok);
-      return { status: failed.length ? 'FAILED' : 'PASSED', durationMs: Date.now() - started, checks, reason: failed.map((check) => check.detail).join('；') || '', ws, clientMessageId, sourceRef, attempts: attempt };
+      return {
+        status: failed.length ? 'FAILED' : 'PASSED', durationMs: Date.now() - started, checks,
+        reason: failed.map((check) => check.detail).join('；') || '', ws, clientMessageId, sourceRef, attempts: attempt,
+        delivery: 'answered', validation: failed.length ? 'failed' : 'passed', lastStage: 'assistant_persisted',
+      };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       const observedContent = String(lastError.verificationContent || lastError.assistant?.content || '').trim();
@@ -412,22 +438,37 @@ async function runOne({ job, baseUrl, auth }) {
       // 既不能补齐当前回答，也会占用完整分类预算并制造重复产品任务。直接结算为失败，
       // 让串行轮询继续下一题，同时保留正文引用、检查项和 WS 诊断。
       if (lastError.assistant) {
+        const failedChecks = lastError.checks?.filter((check) => !check.ok) || [];
+        const onlyCompletionMissing = failedChecks.length > 0 && failedChecks.every((check) => check.key === 'complete');
         return {
-          status: 'FAILED', durationMs: Date.now() - started, checks: lastError.checks || [],
-          reason: lastError.message, ws: lastError.ws, clientMessageId, sourceRef, attempts: attempt,
+          status: 'FAILED', durationMs: Date.now() - started, checks: [...attemptChecks, ...(lastError.checks || [])],
+          reason: lastError.message, ws: lastError.ws || { frameCount: 0, eventTypes: [] }, clientMessageId, sourceRef, attempts: attempt,
+          delivery: onlyCompletionMissing ? 'partial' : 'answered',
+          validation: onlyCompletionMissing ? 'not_evaluated' : 'failed', lastStage: 'assistant_persisted',
         };
       }
+      if (lastError.wsDiagnostic) {
+        const retryDelayMs = attempt < MAX_REQUEST_ATTEMPTS ? retryBackoffMs(attempt) : 0;
+        const detail = formatAttemptDiagnostic(attempt, lastError, Date.now() - attemptStarted, retryDelayMs);
+        attemptChecks.push({ key: `ws_attempt_${attempt}`, ok: false, detail });
+      }
       if (attempt < MAX_REQUEST_ATTEMPTS) {
-        console.log(`[ws] #${job.position} 第 ${attempt}/${MAX_REQUEST_ATTEMPTS} 次未获得正文，已断开连接，准备重试：${lastError.message}`);
+        const retryDelayMs = retryBackoffMs(attempt);
+        console.log(`[ws] #${job.position} 第 ${attempt}/${MAX_REQUEST_ATTEMPTS} 次未获得正文：${lastError.message}；等待 ${retryDelayMs / 1000}s 后换新会话重试`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
     }
   }
-  const error = new Error(lastError?.message || '案例请求未能完成', { cause: lastError });
-  error.sourceRef = sourceRef;
-  error.checks = lastError?.checks || null;
-  error.clientMessageId = lastError?.clientMessageId || null;
-  error.ws = lastError?.ws || null;
-  throw error;
+  const reason = lastError?.message || '案例请求未能完成';
+  const executionError = Boolean(lastError?.wsDiagnostic)
+    || /^(?:HTTP |WebSocket (?:连接超时|连接或传输失败)|缺少 SCIENCE42_|登录|获取 WS)/.test(reason);
+  return {
+    status: 'FAILED', durationMs: Date.now() - started, checks: [...attemptChecks, ...(lastError?.checks || [])], reason,
+    ws: lastError?.ws || { frameCount: 0, eventTypes: [] }, clientMessageId: lastError?.clientMessageId || null,
+    sourceRef, attempts: MAX_REQUEST_ATTEMPTS,
+    delivery: executionError ? 'execution_error' : 'no_response', validation: 'not_evaluated',
+    lastStage: executionError ? 'transport' : 'request_sent',
+  };
 }
 
 if (!['physics', 'data', 'material'].includes(CATEGORY) || INDICES.length === 0 || INDICES.some((value) => !Number.isInteger(value) || value < 1) || new Set(INDICES).size !== INDICES.length) {
@@ -452,7 +493,7 @@ async function worker(slot) {
   while (cursor < selected.length) {
     const item = selected[cursor++];
     if (item.missing) {
-      const result = { position: item.position, title: `案例 #${item.position}`, status: 'FAILED', reason: '该位置没有对应的已同步案例卡 WS 配置', durationMs: 0 };
+      const result = { position: item.position, title: `案例 #${item.position}`, status: 'FAILED', reason: '该位置没有对应的已同步案例卡 WS 配置', durationMs: 0, delivery: 'execution_error', validation: 'not_evaluated', lastStage: 'case_config', attempts: 0 };
       results.push(result); console.log(`[run ${slot}] #${result.position} ${result.title} → ${result.reason} (0s)`); continue;
     }
     const runStarted = Date.now();
@@ -463,18 +504,22 @@ async function worker(slot) {
       results.push({ position: item.position, title: item.title, ...result });
       console.log(`[run ${slot}] #${item.position} ${item.title} → ${result.reason || result.status} (${Math.round(result.durationMs / 1000)}s)`);
       console.log(`[ws] #${item.position} frames=${result.ws.frameCount} types=${result.ws.eventTypes.join(',') || 'none'} request=${result.clientMessageId}`);
-      console.log(`__CASE_WS_RESULT__${JSON.stringify({ position: item.position, executionMode: 'websocket', requestId: result.clientMessageId, frameCount: result.ws.frameCount, eventTypes: result.ws.eventTypes, checks: result.checks, sourceRef: result.sourceRef })}`);
+      console.log(`__CASE_WS_RESULT__${JSON.stringify({ position: item.position, executionMode: 'websocket', requestId: result.clientMessageId, frameCount: result.ws.frameCount, eventTypes: result.ws.eventTypes, checks: result.checks, sourceRef: result.sourceRef, delivery: result.delivery, validation: result.validation, lastStage: result.lastStage, attempts: result.attempts })}`);
     } catch (error) {
-      const result = { position: item.position, title: item.title, status: 'FAILED', reason: error instanceof Error ? error.message : String(error), durationMs: Date.now() - runStarted };
+      const result = {
+        position: item.position, title: item.title, status: 'FAILED', reason: error instanceof Error ? error.message : String(error), durationMs: Date.now() - runStarted,
+        delivery: 'execution_error', validation: 'not_evaluated', lastStage: 'runner_unexpected', attempts: 1,
+      };
       results.push(result); console.log(`[run ${slot}] #${item.position} ${item.title} → ${result.reason} (${Math.round(result.durationMs / 1000)}s)`);
-      if (error?.sourceRef) console.log(`__CASE_WS_RESULT__${JSON.stringify({
+      console.log(`__CASE_WS_RESULT__${JSON.stringify({
         position: item.position,
         executionMode: 'websocket',
-        requestId: error.clientMessageId || null,
-        frameCount: Number.isInteger(error.ws?.frameCount) ? error.ws.frameCount : null,
-        eventTypes: Array.isArray(error.ws?.eventTypes) ? error.ws.eventTypes : null,
-        checks: Array.isArray(error.checks) ? error.checks : null,
-        sourceRef: error.sourceRef,
+        requestId: error?.clientMessageId || null,
+        frameCount: Number.isInteger(error?.ws?.frameCount) ? error.ws.frameCount : null,
+        eventTypes: Array.isArray(error?.ws?.eventTypes) ? error.ws.eventTypes : null,
+        checks: Array.isArray(error?.checks) ? error.checks : null,
+        sourceRef: error?.sourceRef || null,
+        delivery: result.delivery, validation: result.validation, lastStage: result.lastStage, attempts: result.attempts,
       })}`);
     }
     if (cursor < selected.length) {
