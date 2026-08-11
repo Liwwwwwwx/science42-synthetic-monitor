@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { getTargetUrl } from '../shared/config/project.mjs';
 import { isAutomaticReloginAllowed, loadReusableWsAuth } from '../shared/auth/reusable-ws-auth.mjs';
 import { createWebSocketCloseError, createWebSocketError, formatAttemptDiagnostic, retryBackoffMs } from '../shared/ws/transport-diagnostics.mjs';
+import { collectDataFlowStages, hasStlArtifact, isDataCaseComplete } from '../shared/data-case-assertions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JOBS_PATH = path.join(ROOT, 'shared/config/case-ws-jobs.json');
@@ -339,7 +340,6 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
   return { completion, conversationReady, hasBusinessFrame: () => businessFrameCount > 0, close: () => close?.() };
 }
 
-const DATA_FLOW_PATTERN = /CAD\s*组装与建模任务|构思装配结构规划|编写底层代码|生成几何实体|三维(?:CAD)?(?:网格|模型)|网格(?:生成|划分)|可视化/i;
 function stepHasCodeBlock(content, step) {
   const next = step + 1;
   const section = new RegExp(`Step\\s*${step}[\\s.、:：][\\s\\S]*?(?=Step\\s*${next}[\\s.、:：]|$)`, 'i').exec(content)?.[0] || '';
@@ -354,10 +354,11 @@ function validateAnswer(job, content) {
     checks.push({ key: 'png', ok: /\.png\b|data:image\/png|!\[[^\]]*\]\([^)]*\.png/i.test(content), detail: 'PNG 产物' });
     checks.push({ key: 'complete', ok: /项目[\s\S]{0,160}执行完成/i.test(content), detail: '执行完成标记' });
   } else if (CATEGORY === 'data') {
-    // 数据建模团队的分段文案会随任务模板和模型版本变化；只确认已进入 CAD/网格流程，
-    // 不再要求四句固定文案在同一条消息中出现。最终通过仍必须有 STL 产物。
-    checks.push({ key: 'cad_flow', ok: DATA_FLOW_PATTERN.test(content), detail: 'CAD/网格流程已启动' });
-    checks.push({ key: 'stl', ok: /\.stl(?:[?#]|$)|<<<STL_VIEWER:|STL 模型|>STL<|STL_VIEWER/i.test(content), detail: 'STL 产物' });
+    // 业务链路与页面冒烟共用阶段判定：兼容产品文案演进，但仍要求规划和几何实体都完成。
+    const stages = new Set(collectDataFlowStages(content));
+    const stlArtifact = hasStlArtifact(content);
+    checks.push({ key: 'cad_flow', ok: isDataCaseComplete(stages, true), detail: '建模方案与几何实体生成流程' });
+    checks.push({ key: 'stl_file', ok: stlArtifact, detail: 'STL 文件产物' });
   } else {
     const retrieval = /中文检索项/.test(content) && /论文检索进度|检索概览|检索结果重排|文献检索/.test(content) && /综合回答/.test(content);
     const analysis = /材料名称核对|已入库性质|本轮建议|核心材料需求|候选材料|需求与瓶颈的关联/.test(content) && /追问推荐\s*[→>]?/.test(content);

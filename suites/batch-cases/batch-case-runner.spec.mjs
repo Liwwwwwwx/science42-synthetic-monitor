@@ -4,6 +4,7 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { checkKey, finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs';
 import { ensureMonitoringConversation } from '../../shared/lib/helpers.mjs';
+import { collectDataFlowStages, dataCaseFailureReason, hasStlArtifact, isDataCaseComplete, missingDataFlowStages } from '../../shared/data-case-assertions.mjs';
 
 // 批量点击 SCIENCE42_BASE_URL 指向目标的聊天页案例卡 Run，并保存每个案例的页面输出。
 // 账号登录和滑块验证必须由人工完成；脚本不读取或绕过验证码数据。
@@ -54,16 +55,6 @@ const MATERIAL_ANALYSIS_RE = /材料名称核对|已入库性质|本轮建议|�
 // 综合回答区段的“候选/性能结论”信号：只作用于「综合回答」之后的文本，避免初始确认语误匹配。
 const MATERIAL_CONCLUSION_RE = /候选|结论|方案|性能|指标|建议|推荐/;
 
-// 数据建模（dataAnalytics）专属验收：CAD 组装与建模任务必须出现的流程文案。
-// 以真实 Run 输出定标：规划 → 底层代码 → 几何实体，缺任何一段都视为流程不完整。
-const DATA_REQUIRED_PHRASES = [
-  'CAD 组装与建模任务',
-  '正在构思装配结构规划',
-  '规划已交付，开始编写底层代码',
-  '正在生成几何实体，请稍候',
-];
-// stl 文件产物信号：文本引用文件名/链接、STL_VIEWER 内嵌标记或 3D 查看器徽标
-const STL_RE = /\.stl(?:[?#]|$)|<<<STL_VIEWER:|STL 模型|>STL<|STL_VIEWER/i;
 
 // 失败信号只认明确的失败文案（配合新增计数对比，历史转录残留不会误触发）。
 // 不能含 error/504/50x 等：案例描述与历史对话里的 Max Error、HTTP 504、参数 2500 等会误匹配。
@@ -92,10 +83,6 @@ const PNG_RE = /\.png\b|data:image\/png|!\[[^\]]*\]\([^)]*\.png/i;
 const REQUIRED_STEPS = [1, 2, 3, 4, 5, 6];
 // 任务已开始的早期信号（只认「生成中」类实时状态；Step/完成文案会在历史转录里残留，不能扫整页）
 const EARLY_OUTPUT_RE = /生成中|正在生成|Generating/i;
-
-function isDataCaseComplete(dataPhrasesSeen, stlSeen) {
-  return DATA_REQUIRED_PHRASES.every((phrase) => dataPhrasesSeen.has(phrase)) && stlSeen;
-}
 
 /**
  * 从案例标题提取可在自然语言回复中出现的领域词。
@@ -776,10 +763,8 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
               if (PNG_RE.test(assistantText)) pngSeen = true;
             }
             if (IS_DATA_CASE) {
-              for (const phrase of DATA_REQUIRED_PHRASES) {
-                if (assistantText.includes(phrase)) dataPhrasesSeen.add(phrase);
-              }
-              if (STL_RE.test(assistantText)) stlSeen = true;
+              for (const stage of collectDataFlowStages(assistantText)) dataPhrasesSeen.add(stage);
+              if (hasStlArtifact(assistantText)) stlSeen = true;
             }
             if (IS_MATERIAL_CASE) {
               if (MATERIAL_ZH_SEARCH_RE.test(assistantText)) materialZhSearchSeen = true;
@@ -831,10 +816,8 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             newComplete = EXECUTION_COMPLETE_RE.test(assistantText);
             genericComplete = newComplete || (!STREAMING_RE.test(assistantText) && stableRounds >= 2);
             if (IS_DATA_CASE) {
-              for (const phrase of DATA_REQUIRED_PHRASES) {
-                if (assistantText.includes(phrase)) dataPhrasesSeen.add(phrase);
-              }
-              if (STL_RE.test(assistantText)) stlSeen = true;
+              for (const stage of collectDataFlowStages(assistantText)) dataPhrasesSeen.add(stage);
+              if (hasStlArtifact(assistantText)) stlSeen = true;
               dataComplete = isDataCaseComplete(dataPhrasesSeen, stlSeen);
             }
             if (IS_MATERIAL_CASE) {
@@ -984,11 +967,11 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
             if (serviceDown) {
               skip('cad_flow', '服务不可用，未进入执行');
             } else {
-              const missing = DATA_REQUIRED_PHRASES.filter((phrase) => !dataPhrasesSeen.has(phrase));
+              const missing = missingDataFlowStages(dataPhrasesSeen);
               if (missing.length === 0) {
-                pass('cad_flow', 'CAD 组装与建模流程文案完整出现');
+                pass('cad_flow', '建模方案与几何实体生成流程均已出现');
               } else {
-                fail('cad_flow', 'MISSING_CAD_PHRASE', `缺少流程文案：${missing.join('；')}`);
+                fail('cad_flow', 'MISSING_CAD_STAGE', `缺少流程信号：${missing.map((stage) => stage.label).join('、')}`);
               }
             }
 
@@ -1078,7 +1061,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
           } else if (!IS_PHYSICS_CASE && !IS_DATA_CASE && !IS_MATERIAL_CASE && genericComplete) {
             pass('complete', '新增 assistant 回复已完成');
           } else {
-            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : IS_DATA_CASE ? '数据建模流程未走完（文案或 stl 产物缺失）' : IS_MATERIAL_CASE ? `材料流程未走完（已见 综合回答=${materialComprehensiveSeen}，中文检索项=${materialZhSearchSeen}，追问推荐=${materialZhuituiSeen}，稳定轮=${stableRounds}，空轮=${nullRounds}）` : '新增回复仍在生成或未完成'));
+            fail('complete', newFailure ? 'EXECUTION_FAILED' : 'NOT_COMPLETE', newFailure ? '任务执行失败' : (IS_PHYSICS_CASE ? '未检测到物理任务执行完成' : IS_DATA_CASE ? dataCaseFailureReason(dataPhrasesSeen, stlSeen) : IS_MATERIAL_CASE ? `材料流程未走完（已见 综合回答=${materialComprehensiveSeen}，中文检索项=${materialZhSearchSeen}，追问推荐=${materialZhuituiSeen}，稳定轮=${stableRounds}，空轮=${nullRounds}）` : '新增回复仍在生成或未完成'));
           }
 
           result.checks = itemChecks;
