@@ -1,6 +1,91 @@
 import { expect } from '@playwright/test';
 import { cfg, requireEnv } from '../config/test-config.mjs';
 
+const SELECTED_CONVERSATION_KEY = 'ximu:selected-conversation-id';
+const CHAT_CATEGORY_LABELS = ['数据建模', '数学建模', '物理求解', '材料计算', 'AdvancedResearch'];
+export const CONVERSATION_MISMATCH_ERROR_CODE = 'CONVERSATION_MISMATCH';
+
+async function waitForInputEnabled(page, input, timeoutMs) {
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await input.isVisible().catch(() => false) && !(await input.isDisabled().catch(() => true))) {
+      return true;
+    }
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+async function actionIsSelected(action) {
+  return /selected/i.test(await action.getAttribute('class').catch(() => '') || '');
+}
+
+async function clickAndConfirmCategory(page, action, timeoutMs) {
+  if (await actionIsSelected(action)) return true;
+  try {
+    await action.click({ timeout: Math.max(1, Math.min(3_000, timeoutMs)) });
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await actionIsSelected(action)) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+/**
+ * 选择聊天页能力分类，并以选中样式确认点击真正生效。
+ * 不能只把 click() 成功当作分类已切换：SPA 重渲染或重复文案可能吞掉点击。
+ */
+export async function selectChatCategory(page, categoryLabel, timeoutMs = 15_000) {
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  while (Date.now() < deadline) {
+    const actions = page.locator('div[class*="chat-action"]');
+    for (let index = 0; index < await actions.count(); index += 1) {
+      const action = actions.nth(index);
+      if ((await action.innerText().catch(() => '')).trim() !== categoryLabel) continue;
+      if (!(await action.isVisible().catch(() => false))) continue;
+      if (await clickAndConfirmCategory(page, action, Math.min(5_000, deadline - Date.now()))) return true;
+    }
+
+    // 线上编译产物的 action class 偶尔变化；只接受能回溯到 chat-action 的精确文案，
+    // 避免误点案例正文、弹窗或历史消息中的同名文本。
+    const labels = page.getByText(categoryLabel, { exact: true });
+    for (let index = await labels.count() - 1; index >= 0; index -= 1) {
+      const label = labels.nth(index);
+      if (!(await label.isVisible().catch(() => false))) continue;
+      const action = label.locator('xpath=ancestor-or-self::div[contains(@class,"chat-action")][1]');
+      if (await action.count().catch(() => 0) !== 1) continue;
+      if (await clickAndConfirmCategory(page, action, Math.min(5_000, deadline - Date.now()))) return true;
+    }
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
+export async function getCurrentConversationId(page) {
+  return page.evaluate((storageKey) => sessionStorage.getItem(storageKey), SELECTED_CONVERSATION_KEY);
+}
+
+export async function waitForCurrentConversation(page, expectedConversationId, timeoutMs = 5_000) {
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await getCurrentConversationId(page) === expectedConversationId) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+export async function assertCurrentConversation(page, expectedConversationId, timeoutMs = 5_000) {
+  if (!(await waitForCurrentConversation(page, expectedConversationId, timeoutMs))) {
+    const error = new Error('当前页面会话与自动化专用会话不一致');
+    error.code = CONVERSATION_MISMATCH_ERROR_CODE;
+    throw error;
+  }
+}
+
 export async function loginIfNeeded(page) {
   await page.goto(cfg.entryPath);
   const password = page.locator(cfg.selectors.password);
@@ -44,7 +129,7 @@ export async function assertConversationAuthenticated(page) {
   }
 }
 
-export async function newConversation(page) {
+export async function newConversation(page, categoryLabel) {
   await page.goto(cfg.chatPath);
   const newChat = page.getByRole('button', { name: '新建聊天', exact: true });
   // 必须等待「新建聊天」按钮渲染后再点击：并发批量任务时服务器同时跑多个
@@ -75,38 +160,45 @@ export async function newConversation(page) {
   }
   // 未点中（页面异常/按钮不存在）不抛错：走下方分类标签激活的降级路径，
   // 由 ensureMonitoringConversation 的轮询兜底判定（找不到新 id 会 BLOCKED）。
-  // Science42 新版首页 input 默认 disabled，点分类标签激活对话
-  const input = page.locator(cfg.selectors.input).last();
-  if (await input.isVisible().catch(() => false) && await input.isDisabled().catch(() => false)) {
-    for (const label of ['数据建模', '数学建模', '物理求解', '材料计算', 'AdvancedResearch']) {
-      const tag = page.locator('main').getByText(label, { exact: true }).first();
-      if (await tag.count() === 1 && await tag.isVisible().catch(() => false)) {
-        await tag.click().catch(() => {});
-        await page.waitForTimeout(1000);
-        break;
-      }
-    }
-  }
+  // Science42 新版首页 input 默认 disabled，必须用本套件目标分类激活。
+  // 未指定分类的通用套件保留原先的“第一个可用分类”降级行为。
+  await activateChatInput(page, categoryLabel);
 }
 
-export async function activateChatInput(page) {
+export async function activateChatInput(page, categoryLabel, timeoutMs = 15_000) {
   const input = page.locator(cfg.selectors.input).last();
-  if (!(await input.isVisible().catch(() => false)) || !(await input.isDisabled().catch(() => false))) return;
-  for (const label of ['数据建模', '数学建模', '物理求解', '材料计算', 'AdvancedResearch']) {
-    const tag = page.locator('main').getByText(label, { exact: true }).first();
-    if (await tag.count() === 1 && await tag.isVisible().catch(() => false)) {
-      await tag.click();
-      await expect(input).toBeEnabled({ timeout: 15_000 });
-      return;
+  if (!(await input.isVisible().catch(() => false))) return;
+  // 显式分类必须无条件切换，不能因为输入框已启用就沿用上一个模块。
+  if (categoryLabel) {
+    if (!(await selectChatCategory(page, categoryLabel, timeoutMs))) {
+      throw new Error(`无法选择“${categoryLabel}”聊天分类`);
     }
+    if (await waitForInputEnabled(page, input, timeoutMs)) return categoryLabel;
+    throw new Error(`无法用“${categoryLabel}”激活聊天输入框`);
   }
+  if (!(await input.isDisabled().catch(() => false))) return;
+  const labels = CHAT_CATEGORY_LABELS;
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  for (let index = 0; index < labels.length; index += 1) {
+    const label = labels[index];
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    // 通用降级要给后续分类留下尝试机会。
+    const selectionBudget = Math.max(
+      1,
+      Math.min(3_000, Math.floor(remaining / (labels.length - index))),
+    );
+    if (!(await selectChatCategory(page, label, selectionBudget))) continue;
+    if (await waitForInputEnabled(page, input, deadline - Date.now())) return label;
+  }
+  throw new Error('无法用任一聊天分类激活输入框');
 }
 
 /**
  * 每个监控用途只保留一条专用会话：首次创建并以 title 作为首段内容，
  * 后续从最近对话中切回复用，避免持续消耗产品的会话数量上限。
  */
-export async function ensureMonitoringConversation(page, title) {
+export async function ensureMonitoringConversation(page, title, { categoryLabel } = {}) {
   const conversations = async () => page.evaluate(async () => {
     const response = await fetch('/api/conversation/conversations?page=1&limit=100', {
       credentials: 'include',
@@ -116,49 +208,24 @@ export async function ensureMonitoringConversation(page, title) {
     const items = Array.isArray(body) ? body : body?.data?.conversations || body?.conversations || body?.data?.items || body?.items || [];
     return Array.isArray(items) ? items.map((item) => ({ id: String(item.id || ''), title: String(item.title || '') })) : [];
   });
-  const select = async () => {
-    // 精确匹配标题：hasText 是子串匹配，「物理案例-1」会命中「物理案例-10/12」等。
-    // 会话列表懒加载（recent-list 滚动加载更多，实测初始仅渲染前 ~20 个会话）：
-    // 槽位会话（物理案例-N）可能排在列表深处（API 第 20+ 位），不滚动永远找不到。
-    // 每轮遍历未命中 → 滚动列表容器触底加载 → 重试，最多 10 轮（~20s）。
-    const listSelector = '[class*="recent-list"], [class*="chat-list"]';
-    for (let round = 0; round < 10; round += 1) {
-      const items = page.locator('[class*="chat-item"]');
-      for (let index = 0; index < await items.count(); index += 1) {
-        const item = items.nth(index);
-        const itemTitle = (await item.getAttribute('title').catch(() => '')) || (await item.innerText().catch(() => '')).trim();
-        if (itemTitle === title) {
-          await item.click();
-          await expect(page.locator(cfg.selectors.input).last()).toBeVisible({ timeout: 15_000 });
-          await activateChatInput(page);
-          return true;
-        }
-      }
-      const before = await items.count();
-      await page.evaluate((selector) => {
-        const lists = document.querySelectorAll(selector);
-        for (const list of lists) list.scrollTop = list.scrollHeight;
-      }, listSelector);
-      await page.waitForTimeout(1_500);
-      // 列表没有更多可加载（数量不再增长）→ 目标确实不在列表中。
-      if ((await items.count()) <= before) break;
-    }
-    // 当前本地 XIMU 的 /#/chat 会重定向到首页工作台；该视图没有历史会话列表。
-    // 此时不能把「列表不可见」当成案例执行失败，继续使用已恢复的浏览器会话状态即可。
-    return false;
-  };
-
   // 创建+改名存在并发竞态：并发进程几乎同时点「新建聊天」时可能拿到同一会话，
   // 各自 rename 成自己的槽位标题（beforeIds 不含对方刚建的会话）。
   // 因此改名后二次确认标题存在；被并发进程改名则重试一次完整流程。
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const existing = (await conversations()).find((item) => item.title === title);
     if (existing) {
-      return { created: false, selected: await select(), conversationId: existing.id };
+      return {
+        created: false,
+        selected: await selectMonitoringConversation(page, {
+          conversationId: existing.id,
+          title,
+          categoryLabel,
+        }),
+        conversationId: existing.id,
+      };
     }
     const beforeIds = new Set((await conversations()).map((item) => item.id));
-    await newConversation(page);
-    await activateChatInput(page);
+    await newConversation(page, categoryLabel);
     await sendAndMeasure(page, `${title}。这是自动化测试专用会话，请保留该会话用于后续测试。`);
     let createdId = '';
     const deadline = Date.now() + 15_000;
@@ -168,6 +235,7 @@ export async function ensureMonitoringConversation(page, title) {
       if (!createdId) await page.waitForTimeout(500);
     }
     if (!createdId) throw new Error('新建监控会话后未找到服务端 conversation id');
+    await assertCurrentConversation(page, createdId, 5_000);
     await page.evaluate(async ({ conversationId, conversationTitle }) => {
       const response = await fetch('/api/conversation/update_title', {
         method: 'POST',
@@ -180,11 +248,50 @@ export async function ensureMonitoringConversation(page, title) {
       if (!response.ok) throw new Error(`conversation title HTTP ${response.status}`);
     }, { conversationId: createdId, conversationTitle: title });
     if ((await conversations()).some((item) => item.title === title)) {
-      return { created: true, selected: await select(), conversationId: createdId };
+      return { created: true, selected: true, conversationId: createdId };
     }
     // 标题未确认（可能被并发进程改名）：重试一次完整创建流程。
   }
   throw new Error(`监控会话「${title}」创建后标题确认失败（可能被并发进程改名）`);
+}
+
+/**
+ * 从懒加载会话列表选择指定服务端会话。
+ * 标题只用于定位候选项，最终必须以 sessionStorage 中的 conversation ID 确认。
+ */
+export async function selectMonitoringConversation(page, {
+  conversationId,
+  title,
+  categoryLabel,
+  maxRounds = 10,
+}) {
+  const listSelector = '[class*="recent-list"], [class*="chat-list"]';
+  for (let round = 0; round < maxRounds; round += 1) {
+    const items = page.locator('[class*="chat-item"]');
+    for (let index = 0; index < await items.count(); index += 1) {
+      const item = items.nth(index);
+      const itemTitleNode = item.locator('[class*="chat-item-title"]').first();
+      const itemTitle = (await itemTitleNode.innerText().catch(() => '')).trim()
+        || ((await item.getAttribute('title').catch(() => '')) || '').split('\n')[0].trim()
+        || (await item.innerText().catch(() => '')).split('\n')[0].trim();
+      if (itemTitle !== title) continue;
+
+      await item.click();
+      await page.locator(cfg.selectors.input).last().waitFor({ state: 'visible', timeout: 15_000 });
+      // 同名会话可能不止一条；只有刷新锚点与服务端 ID 一致才算选中。
+      if (!(await waitForCurrentConversation(page, conversationId, 3_000))) continue;
+      await activateChatInput(page, categoryLabel);
+      return true;
+    }
+
+    // 虚拟列表滚动后元素数量可能保持不变，因此不能用 count 未增长提前退出。
+    await page.evaluate((selector) => {
+      const lists = document.querySelectorAll(selector);
+      for (const list of lists) list.scrollTop = list.scrollHeight;
+    }, listSelector);
+    await page.waitForTimeout(1_500);
+  }
+  return false;
 }
 
 /**
