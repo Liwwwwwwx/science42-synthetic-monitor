@@ -74,12 +74,14 @@ export function toBackendPayload(envelope) {
 
 export async function writeLocalResult(envelope) {
   const dir = path.join(PROJECT.resultsDir, envelope.suiteId || 'unknown');
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.chmod(dir, 0o700);
   const file = path.join(dir, `${envelope.finishedAt.replaceAll(':', '-')}-${envelope.runId}.json`);
   const latest = path.join(dir, 'latest.json');
   const body = JSON.stringify(envelope, null, 2);
-  await fs.writeFile(file, body, 'utf8');
-  await fs.writeFile(latest, body, 'utf8');
+  await fs.writeFile(file, body, { encoding: 'utf8', mode: 0o600 });
+  await fs.writeFile(latest, body, { encoding: 'utf8', mode: 0o600 });
+  await Promise.all([fs.chmod(file, 0o600), fs.chmod(latest, 0o600)]);
   return { file, latest };
 }
 

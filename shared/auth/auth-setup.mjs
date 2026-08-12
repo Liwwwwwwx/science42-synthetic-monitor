@@ -119,9 +119,12 @@ if (!authenticated) {
 }
 
 await fs.mkdir(path.dirname(storageState), { recursive: true, mode: 0o700 });
+await fs.chmod(path.dirname(storageState), 0o700);
 await context.storageState({ path: storageState });
+await fs.chmod(storageState, 0o600);
 const sessionStorageState = await page.evaluate(() => Object.fromEntries(Object.entries(sessionStorage)));
-await fs.writeFile(sessionStatePath, JSON.stringify(sessionStorageState, null, 2), 'utf8');
+await fs.writeFile(sessionStatePath, JSON.stringify(sessionStorageState, null, 2), { encoding: 'utf8', mode: 0o600 });
+await fs.chmod(sessionStatePath, 0o600);
 console.log(`已保存 ${storageState}`);
 console.log(`已保存 ${sessionStatePath} (${Object.keys(sessionStorageState).length} entries)`);
 console.log(`目标站 ${baseUrl}`);

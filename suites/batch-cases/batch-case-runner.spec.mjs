@@ -3,7 +3,12 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { checkKey, finishSuiteReport, mapItemStatus } from '../../shared/report/index.mjs';
-import { ensureMonitoringConversation } from '../../shared/lib/helpers.mjs';
+import {
+  assertCurrentConversation,
+  CONVERSATION_MISMATCH_ERROR_CODE,
+  ensureMonitoringConversation,
+  selectChatCategory,
+} from '../../shared/lib/helpers.mjs';
 import { collectDataFlowStages, dataCaseFailureReason, hasStlArtifact, isDataCaseComplete, missingDataFlowStages } from '../../shared/data-case-assertions.mjs';
 
 // 批量点击 SCIENCE42_BASE_URL 指向目标的聊天页案例卡 Run，并保存每个案例的页面输出。
@@ -247,42 +252,7 @@ async function chooseCategory(page, timeoutMs) {
   for (let i = 0; i < await loginOverlay.count(); i += 1) {
     if (await loginOverlay.nth(i).isVisible().catch(() => false)) return false;
   }
-  const actions = page.locator('div[class*="chat-action"]');
-  // The production chat shell can render the sidebar first and hydrate the
-  // case panel later. Keep polling long enough for that asynchronous load.
-  const deadline = Date.now() + Math.max(0, timeoutMs);
-  for (let retry = 0; Date.now() < deadline; retry += 1) {
-    const count = await actions.count();
-    for (let i = 0; i < count; i += 1) {
-      const action = actions.nth(i);
-      if ((await action.innerText().catch(() => '')).trim() === CATEGORY_LABEL && await action.isVisible().catch(() => false)) {
-        if (/selected/i.test(await action.getAttribute('class').catch(() => '') || '')) return true;
-        try {
-          await action.click({ timeout: 3_000 });
-        } catch {
-          continue;
-        }
-        await page.waitForTimeout(2_000);
-        return true;
-      }
-    }
-    // 当前线上聊天页没有稳定的 <main> 容器；从全页候选中倒序选择，优先命中底部输入栏动作。
-    const fallbackActions = page.getByText(CATEGORY_LABEL, { exact: true });
-    for (let i = await fallbackActions.count() - 1; i >= 0; i -= 1) {
-      const action = fallbackActions.nth(i);
-      if (await action.isVisible().catch(() => false)) {
-        try {
-          await action.click({ timeout: 3_000 });
-          await page.waitForTimeout(2_000);
-          return true;
-        } catch {
-          continue;
-        }
-      }
-    }
-    await page.waitForTimeout(1_000);
-  }
-  return false;
+  return selectChatCategory(page, CATEGORY_LABEL, timeoutMs);
 }
 
 function caseCards(page) {
@@ -473,8 +443,16 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
       // 材料计算也使用独立会话：与物理案例混用会让物理历史（如 Step 文案）污染材料验收，
       // 且失败历史残留会拒绝下一轮 Run。
       const conversationTitle = IS_DATA_CASE ? '【自动化测试】数据建模' : IS_MATERIAL_CASE ? '【自动化测试】材料计算' : '【自动化测试】物理案例';
-      const conversation = await ensureMonitoringConversation(page, conversationTitle);
+      const conversation = await ensureMonitoringConversation(page, conversationTitle, {
+        categoryLabel: CATEGORY_LABEL,
+      });
+      if (!conversation.selected) {
+        throw new Error(`未能切换到${CATEGORY_LABEL}专用会话`);
+      }
       monitoringConversationId = conversation.conversationId || null;
+      if (monitoringConversationId) {
+        await assertCurrentConversation(page, monitoringConversationId);
+      }
     } catch (error) {
       navigationError = `${CATEGORY_LABEL}专用会话未就绪：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -582,6 +560,9 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
     };
     const started = Date.now();
     try {
+      if (monitoringConversationId) {
+        await assertCurrentConversation(page, monitoringConversationId);
+      }
       // 上一个案例 Run 后面板可能重新折叠（产品会记住折叠状态），
       // 先确保面板展开再按标题找下一张卡片，否则后续案例全部 BLOCKED。
       if (index > 0) {
@@ -596,6 +577,9 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
         console.log(`[case ${index + 1}] 卡片未找到，刷新页面并重新选择分类后重试…`);
         await page.reload({ waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => {});
         await page.waitForTimeout(3_000);
+        if (monitoringConversationId) {
+          await assertCurrentConversation(page, monitoringConversationId);
+        }
         for (let retry = 0; retry < 2 && !card; retry += 1) {
           const reselected = await chooseCategory(page, 15_000);
           const reexpanded = reselected && await ensureCasePanelExpanded(page, 15_000);
@@ -1098,7 +1082,7 @@ test(`批量执行${CATEGORY_LABEL}案例并保存Run输出`, async ({ page }, t
         }
       }
     } catch (error) {
-      result.status = 'FAILED';
+      result.status = error?.code === CONVERSATION_MISMATCH_ERROR_CODE ? 'BLOCKED' : 'FAILED';
       result.reason = error instanceof Error ? error.message : String(error);
       Object.assign(result, await collectOutput(page));
     }
