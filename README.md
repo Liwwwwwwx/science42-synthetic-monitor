@@ -2,6 +2,8 @@
 
 固定目标站：**https://www.science42.tech**（`shared/config/project.mjs`）。
 
+这是页面巡检，不是主机 Prometheus，也不是 `monitor-agent` 的 CPU/磁盘上报。结果经 Runner 进 Admin「合成巡检」。
+
 先读 [MAP.md](./MAP.md)。
 
 ## 安装
