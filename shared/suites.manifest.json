@@ -64,6 +64,15 @@
       "npm": "probe:team-api",
       "reportsToBackend": "ready",
       "summary": "团队只读接口可达性"
+    },
+    {
+      "id": "catalog_sync_check",
+      "name": "目录一致性",
+      "kind": "script",
+      "path": "scripts/check-catalog-sync.mjs",
+      "npm": "check:catalog-sync",
+      "reportsToBackend": "ready",
+      "summary": "比对 runner 案例快照与后端静态目录，发现漂移或快照过期"
     }
   ]
 }
