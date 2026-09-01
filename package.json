@@ -20,7 +20,9 @@
     "probe:team-api": "node --env-file=.env probes/team-api/team-interface-probe.mjs",
     "ask:advanced-research": "sh scripts/with-shared-monitor-lock.sh node scripts/ask-advanced-research-ws.mjs",
     "ask:advanced-research:local": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research-ws.mjs",
-    "ask:advanced-research-ui": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research.mjs"
+    "ask:advanced-research-ui": "sh scripts/with-shared-monitor-lock.sh node --env-file=.env scripts/ask-advanced-research.mjs",
+    "check:catalog-sync": "node scripts/check-catalog-sync.mjs",
+    "sync:case-ws-config": "node scripts/sync-case-ws-config.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { getTargetUrl } from '../shared/config/project.mjs';
 import { isAutomaticReloginAllowed, loadReusableWsAuth } from '../shared/auth/reusable-ws-auth.mjs';
 import { createWebSocketCloseError, createWebSocketError, formatAttemptDiagnostic, retryBackoffMs } from '../shared/ws/transport-diagnostics.mjs';
-import { collectDataFlowStages, hasStlArtifact, isDataCaseComplete } from '../shared/data-case-assertions.mjs';
+import { buildCaseChecks } from '../shared/case-answer-assertions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JOBS_PATH = path.join(ROOT, 'shared/config/case-ws-jobs.json');
@@ -340,31 +340,9 @@ function sendAndWait(wsUrl, payload, initialConversationId = null) {
   return { completion, conversationReady, hasBusinessFrame: () => businessFrameCount > 0, close: () => close?.() };
 }
 
-function stepHasCodeBlock(content, step) {
-  const next = step + 1;
-  const section = new RegExp(`Step\\s*${step}[\\s.、:：][\\s\\S]*?(?=Step\\s*${next}[\\s.、:：]|$)`, 'i').exec(content)?.[0] || '';
-  return /```|<pre\b|class=["'][^"']*code/i.test(section);
-}
 function validateAnswer(job, content) {
-  const checks = [{ key: 'assistant_reply', ok: Boolean(content.trim()), detail: '本次请求已关联到持久化 assistant 回复' }];
-  if (CATEGORY === 'physics') {
-    const steps = [1, 2, 3, 4, 5, 6];
-    checks.push({ key: 'steps', ok: steps.every((step) => new RegExp(`Step\\s*${step}[\\s.、:：]`, 'i').test(content)), detail: 'Step 1-6' });
-    checks.push({ key: 'code_blocks', ok: stepHasCodeBlock(content, 5) && stepHasCodeBlock(content, 6), detail: 'Step 5/6 代码块' });
-    checks.push({ key: 'png', ok: /\.png\b|data:image\/png|!\[[^\]]*\]\([^)]*\.png/i.test(content), detail: 'PNG 产物' });
-    checks.push({ key: 'complete', ok: /项目[\s\S]{0,160}执行完成/i.test(content), detail: '执行完成标记' });
-  } else if (CATEGORY === 'data') {
-    // 业务链路与页面冒烟共用阶段判定：兼容产品文案演进，但仍要求规划和几何实体都完成。
-    const stages = new Set(collectDataFlowStages(content));
-    const stlArtifact = hasStlArtifact(content);
-    checks.push({ key: 'cad_flow', ok: isDataCaseComplete(stages, true), detail: '建模方案与几何实体生成流程' });
-    checks.push({ key: 'stl_file', ok: stlArtifact, detail: 'STL 文件产物' });
-  } else {
-    const retrieval = /中文检索项/.test(content) && /论文检索进度|检索概览|检索结果重排|文献检索/.test(content) && /综合回答/.test(content);
-    const analysis = /材料名称核对|已入库性质|本轮建议|核心材料需求|候选材料|需求与瓶颈的关联/.test(content) && /追问推荐\s*[→>]?/.test(content);
-    checks.push({ key: 'material_profile', ok: retrieval || analysis, detail: retrieval ? '检索综合型' : analysis ? '文本分析型' : '未识别材料 Profile' });
-  }
-  return checks;
+  // 内容验收按类别抽到 shared/case-answer-assertions.mjs（物理步骤/完成标记匹配做了文案容错）。
+  return buildCaseChecks(CATEGORY, content);
 }
 async function runOne({ job, baseUrl, auth }) {
   const started = Date.now();
